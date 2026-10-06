@@ -32,45 +32,45 @@ Relevance scale (shown in the guide, in each pattern's README and by the runner)
 | ⭐ | Niche | Specific cases; knowing it exists is enough. |
 | 🕰 | Historical | The language or framework already solves it; studied to understand older code. |
 
-Levels: ⭐⭐⭐ and ⭐⭐ → Problem, Classic, DotNet. ⭐ and 🕰 → Classic, DotNet.
+Levels: ⭐⭐⭐ and ⭐⭐ → Problem, Classic, DotNet. ⭐ and 🕰 → Classic, DotNet. In the "In .NET" column, **bold** items are coded in the DotNet level; the rest appear only in the guide. The implementation plan fixes the exact types, values and tests of each pattern.
 
 | Pattern | Rel. | Shop example | In .NET (DotNet level) | Ecosystem (guide only) |
 |---|---|---|---|---|
 | **Creational** | | | | |
-| Singleton | ⭐⭐ | VAT (value-added tax) rate table | `AddSingleton`, `Lazy<T>`; the hand-rolled static Singleton is presented as an anti-pattern | — |
-| Factory Method | ⭐⭐ | creating a notifier per channel (email, SMS) | `ILoggerFactory.CreateLogger`, `IHttpClientFactory` | — |
-| Abstract Factory | ⭐ | payment provider families (charge + refund + receipt) | `DbProviderFactory` | — |
-| Builder | ⭐⭐⭐ | building orders; test data builders | `WebApplication.CreateBuilder`, `StringBuilder`, `UriBuilder` | — |
-| Prototype | 🕰 | recurring order from a template | `record` + `with`; why `ICloneable` is discouraged | — |
+| Singleton | ⭐⭐ | VAT (value-added tax) rate table | **`AddSingleton`**, `Lazy<T>` (used by the Classic level); the hand-rolled static Singleton is presented as an anti-pattern | — |
+| Factory Method | ⭐⭐ | creating a notifier per channel (email, SMS) | **keyed services in DI** (the container as the factory), `ILoggerFactory.CreateLogger`, `IHttpClientFactory` | — |
+| Abstract Factory | ⭐ | payment provider families (charge + refund + receipt) | **choosing the family with keyed services**, `DbProviderFactory` | — |
+| Builder | ⭐⭐⭐ | building orders; test data builders | **`StringBuilder`**, **`UriBuilder`**, `WebApplication.CreateBuilder` | — |
+| Prototype | 🕰 | recurring order from a template | **`record` + `with`**; why `ICloneable` is discouraged | — |
 | **Structural** | | | | |
-| Adapter | ⭐⭐⭐ | external shipping carrier API with a different shape | `StreamReader` over `Stream` | AutoMapper (mapping, commercial) |
-| Bridge | ⭐ | notifications: message kind × channel | `ILogger` + `ILoggerProvider` | — |
-| Composite | ⭐⭐ | product bundles (a bundle holds products and bundles) | `IConfiguration`, `CompositeFileProvider` | — |
-| Decorator | ⭐⭐⭐ | price with discount and tax; caching repository | `DelegatingHandler`, `GZipStream`, decorating a registration in DI | Scrutor (`Decorate`) |
-| Facade | ⭐⭐⭐ | `CheckoutService` over stock, payment and shipping | `File.ReadAllText`, `WebApplication` | — |
-| Flyweight | 🕰 | shared categories in a huge catalog | `string.Intern` | — |
-| Proxy | ⭐⭐ | lazy-loaded product images; access control | `Lazy<T>`, `DispatchProxy`, EF Core lazy loading (guide only) | Castle DynamicProxy |
+| Adapter | ⭐⭐⭐ | external shipping carrier API with a different shape | **`StreamReader` over `Stream`** | AutoMapper (mapping, commercial) |
+| Bridge | ⭐ | notifications: message kind × channel | **`ILogger` + a custom `ILoggerProvider`** | — |
+| Composite | ⭐⭐ | product bundles (a bundle holds products and bundles) | **`IConfiguration` sections**, `CompositeFileProvider` | — |
+| Decorator | ⭐⭐⭐ | price with discount and tax; caching repository | **`DelegatingHandler`**, `GZipStream`, decorating a registration in DI | Scrutor (`Decorate`) |
+| Facade | ⭐⭐⭐ | `CheckoutService` over stock, payment and shipping | **`File.ReadAllText`/`WriteAllText`**, `WebApplication` | — |
+| Flyweight | 🕰 | shared categories in a huge catalog | **`string.Intern`** | — |
+| Proxy | ⭐⭐ | lazy-loaded product images; access control | **`Lazy<T>`**, **`DispatchProxy`**, EF Core lazy loading | Castle DynamicProxy |
 | **Behavioral** | | | | |
-| Chain of Responsibility | ⭐⭐⭐ | order validation pipeline | ASP.NET Core middleware, run in memory | — |
-| Command | ⭐⭐ | cart operations with undo | `Action`/`Func` delegates | — |
-| Interpreter | 🕰 | discount rules: `total > 100 AND category = 'books'` | `System.Linq.Expressions` | — |
-| Iterator | ⭐⭐⭐ (understand it; never hand-write it) | paging through orders | `IEnumerable<T>`, `yield return`, `IAsyncEnumerable<T>` | — |
-| Mediator | ⭐⭐ | in-process command dispatcher | nothing in the BCL: a dispatcher over DI | MediatR (commercial) |
-| Memento | ⭐ | cart snapshots for undo | immutable `record`s | — |
-| Observer | ⭐⭐⭐ | order placed → email, stock, analytics | `event`/`EventHandler<T>`, `IObservable<T>`, `IChangeToken` | System.Reactive (Rx) |
-| State | ⭐⭐ | order life cycle | no native support; `switch` expressions as the light alternative | Stateless |
-| Strategy | ⭐⭐⭐ | shipping cost | `IComparer<T>`, `Func<>`, keyed services in DI | — |
-| Template Method | ⭐⭐ | exporting orders (CSV, JSON) | `BackgroundService.ExecuteAsync` | — |
-| Visitor | ⭐ | operations over bundles (VAT, export) | `ExpressionVisitor`; pattern matching as the modern alternative | — |
+| Chain of Responsibility | ⭐⭐⭐ | order validation pipeline | **ASP.NET Core middleware, run in memory** | — |
+| Command | ⭐⭐ | cart operations with undo | **`Action`/`Func` delegates** | — |
+| Interpreter | 🕰 | discount rules: `total > 100 AND category = 'books'` | **`System.Linq.Expressions`** (compiling the parsed rule), `Regex` | — |
+| Iterator | ⭐⭐⭐ (understand it; never hand-write it) | paging through orders | **`IEnumerable<T>` + `yield return`**, **`IAsyncEnumerable<T>`** | — |
+| Mediator | ⭐⭐ | in-process command dispatcher | nothing in the BCL: **a dispatcher over DI** | MediatR (commercial) |
+| Memento | ⭐ | cart snapshots for undo | **immutable `record`s** | — |
+| Observer | ⭐⭐⭐ | order placed → email, stock, analytics | **`event`/`EventHandler<T>`**, **`IObservable<T>`**, `IChangeToken` | System.Reactive (Rx) |
+| State | ⭐⭐ | order life cycle | no native support; **a `switch` expression transition table** as the light alternative | Stateless |
+| Strategy | ⭐⭐⭐ | shipping cost | **keyed services in DI**, **`Func<>`**, `IComparer<T>` | — |
+| Template Method | ⭐⭐ | exporting orders (CSV, JSON) | **`BackgroundService.ExecuteAsync`** | — |
+| Visitor | ⭐ | operations over bundles (VAT, export) | **pattern matching** (the modern alternative), **`ExpressionVisitor`** | — |
 | **Modern / .NET** | | | | |
-| Dependency Injection (Service Locator as anti-pattern) | ⭐⭐⭐ | wiring the checkout | `Microsoft.Extensions.DependencyInjection` | Autofac |
-| Options | ⭐⭐⭐ | shipping settings | `IOptions<T>`, `IOptionsSnapshot<T>`, `IOptionsMonitor<T>` | — |
-| Repository | ⭐⭐ (debated) | products, in memory | `DbSet<T>` already is one (guide) | — |
-| Unit of Work | ⭐⭐ | confirm order and stock together, in memory | `DbContext.SaveChanges` (guide) | — |
-| Specification | ⭐⭐ | "products on sale with stock" | `Expression<Func<T, bool>>` | Ardalis.Specification |
-| Result | ⭐⭐ | business errors without exceptions | none native; hand-written | FluentResults, ErrorOr |
-| Null Object | ⭐⭐ | no discount; guest customer | `NullLogger<T>` | — |
-| Object Pool | ⭐ | buffers when generating invoices | `ArrayPool<T>`, `ObjectPool<T>` | — |
+| Dependency Injection (Service Locator as anti-pattern) | ⭐⭐⭐ | wiring the checkout | **`Microsoft.Extensions.DependencyInjection`** | Autofac |
+| Options | ⭐⭐⭐ | shipping settings | **`IOptions<T>`**, `IOptionsSnapshot<T>`, **`IOptionsMonitor<T>`** | — |
+| Repository | ⭐⭐ (debated) | products, in memory | **`IQueryable<T>`** (the shape `DbSet<T>` gives you); `DbSet<T>` already is one | — |
+| Unit of Work | ⭐⭐ | confirm order and stock together, in memory | **`System.Transactions` (`TransactionScope`)**; `DbContext.SaveChanges` | — |
+| Specification | ⭐⭐ | "products on sale with stock" | **`Expression<Func<T, bool>>` with `IQueryable<T>`** (Classic uses plain predicates) | Ardalis.Specification |
+| Result | ⭐⭐ | business errors without exceptions | none native beyond **the `TryXxx` pattern**; `TypedResults` | FluentResults, ErrorOr |
+| Null Object | ⭐⭐ | no discount; guest customer | **`NullLogger<T>`** | — |
+| Object Pool | ⭐ | buffers when generating invoices | **`ArrayPool<T>`**, **`ObjectPool<T>`** | — |
 
 31 patterns: 23 from the Gang of Four (GoF) book and 8 modern ones. Repository and Unit of Work run **in memory**; the guide explains why EF Core's `DbSet`/`DbContext` already are those patterns, so no database or Docker is needed anywhere.
 
