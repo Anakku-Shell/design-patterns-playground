@@ -1,0 +1,17 @@
+<!--
+  The console app that lists and runs the demos (guide §2.4). References every category.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Patterns.Creational\Patterns.Creational.csproj" />
+    <ProjectReference Include="..\Patterns.Structural\Patterns.Structural.csproj" />
+    <ProjectReference Include="..\Patterns.Behavioral\Patterns.Behavioral.csproj" />
+    <ProjectReference Include="..\Patterns.Modern\Patterns.Modern.csproj" />
+  </ItemGroup>
+
+</Project>

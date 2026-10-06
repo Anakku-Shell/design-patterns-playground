@@ -1,0 +1,50 @@
+using Patterns.Demo;
+using Xunit;
+
+namespace Patterns.Runner.Tests;
+
+public sealed class CatalogTests
+{
+    // The patterns built so far, in guide order. Each code phase appends its cards (spec §3).
+    private static readonly (string Key, Relevance Relevance)[] Expected = [];
+
+    [Fact]
+    public void Catalog_MatchesTheExpectedPatterns()
+    {
+        Assert.Equal(Expected, Catalog.All.Select(d => (d.Key, d.Relevance)));
+    }
+
+    [Fact]
+    public void Keys_AreUnique()
+    {
+        var keys = Catalog.All.Select(d => d.Key).ToList();
+
+        Assert.Equal(keys.Count, keys.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void Keys_AreKebabCase()
+    {
+        Assert.All(Catalog.All, d => Assert.Matches("^[a-z]+(-[a-z]+)*$", d.Key));
+    }
+
+    [Fact]
+    public void EveryDemo_RunsAndWritesOutput()
+    {
+        // A loop instead of a [Theory]: with an empty catalog a theory has no rows, and the loop simply passes.
+        foreach (var demo in Catalog.All)
+        {
+            var output = new StringWriter();
+
+            demo.Run(output);
+
+            Assert.False(string.IsNullOrWhiteSpace(output.ToString()), $"{demo.Key} wrote nothing.");
+        }
+    }
+
+    [Fact]
+    public void EveryDemo_PointsToItsGuideSection()
+    {
+        Assert.All(Catalog.All, d => Assert.Matches(@"^§[4-7]\.\d+$", d.GuideSection));
+    }
+}

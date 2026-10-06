@@ -215,7 +215,7 @@ Why one project per **category** and not one per pattern? Thirty-one projects of
 
 ### 2.2 Root build files
 
-Four files at the root apply to every project, so each is written once. MSBuild, the engine behind `dotnet build`, finds `Directory.Build.props` and `Directory.Packages.props` by walking up from each project's folder; the compiler and the editor find `.editorconfig` the same way; the `dotnet` command finds `global.json` walking up from the folder you run it in.
+Five files at the root apply to every project, so each is written once. MSBuild, the engine behind `dotnet build`, finds `Directory.Build.props` and `Directory.Packages.props` by walking up from each project's folder; the compiler and the editor find `.editorconfig` the same way; the `dotnet` command finds `global.json` walking up from the folder you run it in; Git reads `.gitattributes`.
 
 **`Directory.Build.props`** — compiler settings for every project:
 
@@ -229,12 +229,17 @@ Four files at the root apply to every project, so each is written once. MSBuild,
 | `EnforceCodeStyleInBuild` `true` | Style rules from `.editorconfig` (rules named `IDExxxx`, after IDE: integrated development environment) are checked during the build, not only in the editor. |
 | `InvariantGlobalization` `true` | The programs behave the same on every machine's language settings: `12.50` never prints as `12,50`. |
 | `ManagePackageVersionsCentrally` `true` | Package versions live in one file (next row). |
+| `GenerateDocumentationFile` `true`, `NoWarn` `CS1591` | Needed for the build to report unused `using` directives (IDE0005). XML documentation comments stay optional, so the "missing XML comment" warning (CS1591) is off. |
 
 **`Directory.Packages.props`** — **central package management**: the only place where package versions are written. A `.csproj` lists `<PackageReference Include="xunit.v3" />` without a version. Every project therefore uses exactly the same version of each library.
 
 **`.editorconfig`** — formatting and style rules (indentation, file-scoped namespaces, `_camelCase` private fields, braces always…), read by the editor, the build and `dotnet format`. One rule is relaxed on purpose: **IDE0130** normally asks the namespace to match the folder, but pattern folders are numbered (`1-Classic`) for reading order, and a namespace cannot contain `1-`. The namespace drops the number (`Patterns.Behavioral.Strategy.Classic`).
 
 **`global.json`** — the SDK version (section [1.1](#11-the-net-sdk)).
+
+**`.gitattributes`** — stores every text file with LF line endings, on every operating system. `.editorconfig` asks for LF and `dotnet format --verify-no-changes` checks it, so a Windows checkout that converted files to CRLF would otherwise fail the format check.
+
+A test project with no tests yet would make `dotnet test` fail (Microsoft.Testing.Platform exits with code 8, "zero tests ran"). Until a category gets its first tests, its test project ignores that code through `<TestingPlatformCommandLineArguments>--ignore-exit-code 8</TestingPlatformCommandLineArguments>`; the phase that adds the tests removes the line.
 
 ### 2.3 The folder of a pattern
 
@@ -299,8 +304,8 @@ public interface IDemo
 
 | Command | What happens |
 |---|---|
-| `dotnet run --project src/Patterns.Runner` (or `-- list`) | Lists the patterns by category with their relevance mark and key. |
-| `-- <key>` | Runs that demo. The key is trimmed and case-insensitive: `Strategy`, `strategy` and `STRATEGY` are the same. |
+| `dotnet run --project src/Patterns.Runner` (or `-- list`) | Lists the patterns by category with their relevance mark and key (`(none yet)` under a category whose patterns are not built yet). |
+| `-- <key>` | Runs that demo. The key is trimmed and case-insensitive: `Strategy`, `strategy` and `STRATEGY` are the same. Extra arguments are ignored. |
 | `-- all` | Runs every demo, in the order of this guide. |
 | anything else | Prints `Unknown pattern '<what you typed>'.` and the list, and exits with code 1 (so scripts can detect the mistake). |
 

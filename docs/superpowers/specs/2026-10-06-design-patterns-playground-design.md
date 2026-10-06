@@ -148,7 +148,7 @@ The numbered folders give the reading order in any file explorer. Namespaces dro
 - Problem code marks what hurts: `// PAIN: every new carrier means another case here and in the tests.`
 - Comments explain *why*, not *what*; no comment repeats the line below it.
 - `sealed` classes by default, DTOs and values are `record`s, constructor injection only, time from `TimeProvider`, culture-safe string calls (`InvariantCulture`, `ToUpperInvariant`), logging (where used) through `[LoggerMessage]`.
-- Package versions only in `Directory.Packages.props`. Allowed packages: `Microsoft.Extensions.DependencyInjection`, `.Options`, `.Logging`, `.ObjectPool`, `.Hosting`, ASP.NET Core via framework reference; tests: `xunit.v3`, `TngTech.ArchUnitNET.xUnitV3`. **Not allowed:** MediatR, AutoMapper, FluentAssertions, or any other third-party library in `src/`.
+- Package versions only in `Directory.Packages.props`. Allowed packages: `Microsoft.Extensions.DependencyInjection`, `.Options`, `.Options.ConfigurationExtensions`, `.Configuration`, `.Configuration.Binder`, `.Logging`, `.ObjectPool`, ASP.NET Core via framework reference (which also brings hosting, for `BackgroundService`); tests: `xunit.v3`, `TngTech.ArchUnitNET.xUnitV3`. **Not allowed:** MediatR, AutoMapper, FluentAssertions, or any other third-party library in `src/`.
 
 ## 6. The runner
 

@@ -1,0 +1,16 @@
+<!--
+  Creational patterns (guide chapter 4): who decides which object is created, and how.
+  One folder per pattern: 0-Problem, 1-Classic, 2-DotNet, the demo and a README (guide §2.3).
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Patterns.Shop\Patterns.Shop.csproj" />
+    <ProjectReference Include="..\Patterns.Demo\Patterns.Demo.csproj" />
+  </ItemGroup>
+
+</Project>

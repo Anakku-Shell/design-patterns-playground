@@ -1,0 +1,17 @@
+<!--
+  Behavioral patterns (guide chapter 6): who does what, and how objects talk.
+  The ASP.NET Core shared framework is referenced to run middleware in memory (§6.1) and for BackgroundService (§6.10).
+  One folder per pattern: 0-Problem, 1-Classic, 2-DotNet, the demo and a README (guide §2.3).
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Patterns.Shop\Patterns.Shop.csproj" />
+    <ProjectReference Include="..\Patterns.Demo\Patterns.Demo.csproj" />
+  </ItemGroup>
+
+</Project>
