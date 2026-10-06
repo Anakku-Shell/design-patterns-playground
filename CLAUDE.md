@@ -13,7 +13,7 @@ The explanations live in `docs/DESIGN_PATTERNS_GUIDE.md`, written before the cod
 - `src/Patterns.Runner/`: the console app (`list`, `<key>`, `all`); `Catalog.All` concatenates the four `Demos.All`.
 - `tests/Patterns.<Category>.Tests/`: one test class per pattern (`StrategyTests`). `tests/Patterns.Runner.Tests/`: shop, narrator, runner and catalog. `tests/Patterns.ArchitectureTests/`: the structural rules.
 - `scripts/check-guide.sh`: checks the guide's table-of-contents links and writes `artifacts/mermaid-check.html` (open it in a browser; it must end with `All N diagrams parsed.`).
-- Built so far: foundations (shop, demo contract, runner, architecture tests). No pattern yet. Next: creational patterns.
+- Built so far: foundations (shop, demo contract, runner, architecture tests) and the five creational patterns (Singleton, Factory Method, Abstract Factory, Builder with the `AnOrder` test data builder, Prototype). Next: structural patterns.
 
 ## Levels and folder rules
 
@@ -34,7 +34,7 @@ Each pattern folder (`src/Patterns.Behavioral/Strategy/`):
 - Everything in English: code, comments, docs, commit messages.
 - A class that plays a pattern role starts with `// Role: <GoF role> — <what it does here>.` and `// Guide: §N.M`. Problem code marks the pain with `// PAIN: …`. Comments explain *why*, never repeat the line below.
 - `sealed` by default, values and DTOs are `record`s, constructor injection only, time from `TimeProvider`, money is `decimal` rounded with `decimal.Round(x, 2, MidpointRounding.AwayFromZero)`, culture-safe strings (`CultureInfo.InvariantCulture`, `ToUpperInvariant`), logging through `[LoggerMessage]`.
-- Analyzers run at `latest-recommended` with warnings as errors. Watch for CA1716 (no Visual Basic keywords as type or virtual member names: `And`, `Next`, `Error`…) and CA1305 (culture).
+- Analyzers run at `latest-recommended` with warnings as errors. CA1822 ("make it static") is off in `0-Problem` folders only: Problem code keeps the instance-service shape it is about. Watch for CA1716 (no Visual Basic keywords as type or virtual member names: `And`, `Next`, `Error`…) and CA1305 (culture).
 - Package versions only in `Directory.Packages.props`. `src/` may use only the BCL and `Microsoft.*` packages. **Not allowed anywhere:** MediatR, AutoMapper, FluentAssertions; no third-party package in `src/` (the guide names them instead).
 - Tests: xUnit v3 with plain `Assert`, written before the code (TDD). Equivalence tests show that all levels give the same result.
 

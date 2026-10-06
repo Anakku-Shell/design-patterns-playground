@@ -65,3 +65,8 @@ dotnet_diagnostic.IDE0005.severity = warning
 # Tests: xUnit method names use underscores (Given_When_Then style)
 [tests/**.cs]
 dotnet_diagnostic.CA1707.severity = none
+
+# Problem code mirrors how such services are usually written (instance classes registered in DI). Making
+# their stateless methods static (CA1822) would change the shape the lesson is about. Guide: §2.2.
+[src/**/0-Problem/**.cs]
+dotnet_diagnostic.CA1822.severity = none

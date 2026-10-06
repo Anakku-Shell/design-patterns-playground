@@ -10,11 +10,11 @@ Relevance: ⭐⭐⭐ Essential · ⭐⭐ Useful · ⭐ Niche · 🕰 Historical 
 
 | Category | Pattern | Relevance | Levels | Key | Status |
 |---|---|---|---|---|---|
-| Creational | [Singleton](docs/DESIGN_PATTERNS_GUIDE.md#41-singleton) | ⭐⭐ | P C N | `singleton` | planned |
-| Creational | [Factory Method](docs/DESIGN_PATTERNS_GUIDE.md#42-factory-method) | ⭐⭐ | P C N | `factory-method` | planned |
-| Creational | [Abstract Factory](docs/DESIGN_PATTERNS_GUIDE.md#43-abstract-factory) | ⭐ | C N | `abstract-factory` | planned |
-| Creational | [Builder](docs/DESIGN_PATTERNS_GUIDE.md#44-builder) | ⭐⭐⭐ | P C N | `builder` | planned |
-| Creational | [Prototype](docs/DESIGN_PATTERNS_GUIDE.md#45-prototype) | 🕰 | C N | `prototype` | planned |
+| Creational | [Singleton](docs/DESIGN_PATTERNS_GUIDE.md#41-singleton) | ⭐⭐ | P C N | `singleton` | ready |
+| Creational | [Factory Method](docs/DESIGN_PATTERNS_GUIDE.md#42-factory-method) | ⭐⭐ | P C N | `factory-method` | ready |
+| Creational | [Abstract Factory](docs/DESIGN_PATTERNS_GUIDE.md#43-abstract-factory) | ⭐ | C N | `abstract-factory` | ready |
+| Creational | [Builder](docs/DESIGN_PATTERNS_GUIDE.md#44-builder) | ⭐⭐⭐ | P C N | `builder` | ready |
+| Creational | [Prototype](docs/DESIGN_PATTERNS_GUIDE.md#45-prototype) | 🕰 | C N | `prototype` | ready |
 | Structural | [Adapter](docs/DESIGN_PATTERNS_GUIDE.md#51-adapter) | ⭐⭐⭐ | P C N | `adapter` | planned |
 | Structural | [Bridge](docs/DESIGN_PATTERNS_GUIDE.md#52-bridge) | ⭐ | C N | `bridge` | planned |
 | Structural | [Composite](docs/DESIGN_PATTERNS_GUIDE.md#53-composite) | ⭐⭐ | P C N | `composite` | planned |

@@ -6,7 +6,14 @@ namespace Patterns.Runner.Tests;
 public sealed class CatalogTests
 {
     // The patterns built so far, in guide order. Each code phase appends its cards (spec §3).
-    private static readonly (string Key, Relevance Relevance)[] Expected = [];
+    private static readonly (string Key, Relevance Relevance)[] Expected =
+    [
+        ("singleton", Relevance.Useful),
+        ("factory-method", Relevance.Useful),
+        ("abstract-factory", Relevance.Niche),
+        ("builder", Relevance.Essential),
+        ("prototype", Relevance.Historical),
+    ];
 
     [Fact]
     public void Catalog_MatchesTheExpectedPatterns()

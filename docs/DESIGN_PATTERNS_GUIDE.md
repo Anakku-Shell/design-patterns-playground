@@ -233,7 +233,7 @@ Five files at the root apply to every project, so each is written once. MSBuild,
 
 **`Directory.Packages.props`** — **central package management**: the only place where package versions are written. A `.csproj` lists `<PackageReference Include="xunit.v3" />` without a version. Every project therefore uses exactly the same version of each library.
 
-**`.editorconfig`** — formatting and style rules (indentation, file-scoped namespaces, `_camelCase` private fields, braces always…), read by the editor, the build and `dotnet format`. One rule is relaxed on purpose: **IDE0130** normally asks the namespace to match the folder, but pattern folders are numbered (`1-Classic`) for reading order, and a namespace cannot contain `1-`. The namespace drops the number (`Patterns.Behavioral.Strategy.Classic`).
+**`.editorconfig`** — formatting and style rules (indentation, file-scoped namespaces, `_camelCase` private fields, braces always…), read by the editor, the build and `dotnet format`. One rule is relaxed on purpose: **IDE0130** normally asks the namespace to match the folder, but pattern folders are numbered (`1-Classic`) for reading order, and a namespace cannot contain `1-`. The namespace drops the number (`Patterns.Behavioral.Strategy.Classic`). A second relaxation applies only to `0-Problem` folders: **CA1822** ("this method uses no instance data, make it static") is off there, because Problem code imitates services as they are usually written (instance classes registered in DI), and the lesson is about another pain.
 
 **`global.json`** — the SDK version (section [1.1](#11-the-net-sdk)).
 
@@ -747,7 +747,7 @@ What hurts:
 classDiagram
     class VatRateTable {
         <<Singleton>>
-        -Lazy~VatRateTable~ _instance$
+        -Lazy~VatRateTable~ LazyInstance$
         +VatRateTable Instance$
         -VatRateTable()
         +RateFor(string countryCode) decimal
@@ -792,9 +792,9 @@ public sealed class VatRateTable
 {
     // Lazy<T> creates the instance on first use and is thread-safe by default
     // (LazyThreadSafetyMode.ExecutionAndPublication): two threads never build two tables.
-    private static readonly Lazy<VatRateTable> _instance = new(() => new VatRateTable());
+    private static readonly Lazy<VatRateTable> LazyInstance = new(() => new VatRateTable());
 
-    public static VatRateTable Instance => _instance.Value;
+    public static VatRateTable Instance => LazyInstance.Value;
 
     private readonly Dictionary<string, decimal> _rates = new()
     {
@@ -815,7 +815,7 @@ public sealed class VatRateTable
 
 Three things make it a Singleton: the **private constructor**, the **static field** that holds the one instance, and the **static accessor**. The rates are now private and read-only from outside, which fixes the first pain. The other two remain: `VatRateTable.Instance` is still a hidden, global dependency, and a test still cannot replace it.
 
-Before `Lazy<T>` existed, people wrote "double-checked locking" by hand (`if (_instance == null) lock (...) if (_instance == null) ...`), which is easy to get subtly wrong. If laziness does not matter, `public static VatRateTable Instance { get; } = new();` is also thread-safe: the runtime runs static initializers once.
+Before `Lazy<T>` existed, people wrote "double-checked locking" by hand (`if (instance == null) lock (...) if (instance == null) ...`), which is easy to get subtly wrong. If laziness does not matter, `public static VatRateTable Instance { get; } = new();` is also thread-safe: the runtime runs static initializers once.
 
 #### In .NET
 
@@ -885,7 +885,7 @@ The important change of meaning: a DI singleton is **one instance per container*
 dotnet run --project src/Patterns.Runner -- singleton
 ```
 
-1. In `SingletonTests`, remove the `finally` from `Problem_AnyoneCanChangeTheRates` and run the whole test class a few times: other tests start failing at random, depending on the order. That is shared mutable state.
+1. In `SingletonTests`, remove the `finally` from `Problem_AnyoneCanChangeTheRates` and run the whole test class: other tests start failing or passing depending on the order the tests run in. That is shared mutable state.
 2. In the DotNet level, change `AddSingleton` to `AddTransient` and run `DotNet_OneContainer_ResolvesTheSameObject`: it fails, because every resolution now builds a new table.
 3. Add `["DE"] = 0.19m` to the Classic table and ask for `" de "`.
 
@@ -1380,7 +1380,8 @@ public sealed class MutableOrder
 {
     public Customer? Customer { get; set; }
     public Address? ShippingAddress { get; set; }
-    public List<OrderLine> Lines { get; } = [];
+    public IList<OrderLine> Lines { get; } = new List<OrderLine>();
+    public decimal Total => Lines.Sum(line => line.LineTotal);
 
     // PAIN: an invalid order exists until someone remembers to call IsValid(), and every caller
     // must remember to.
@@ -1518,7 +1519,7 @@ public static string Print(Order order)
 }
 ```
 
-For two books and the headphones it produces exactly:
+For two books and the headphones it produces exactly the text below. (`AppendLine` ends each line with `Environment.NewLine`, `\r\n` on Windows, so the test compares both sides after `ReplaceLineEndings("\n")`.)
 
 ```
 Order for Ana
@@ -1576,7 +1577,7 @@ dotnet run --project src/Patterns.Runner -- builder
 
 1. Call `Build()` without `ShipTo` and read the message. Then try the same mistake with `MutableOrder`: nothing stops you.
 2. Add the same book twice with quantities 1 and 3, and check that the order has one line with 4.
-3. Remove `CultureInfo.InvariantCulture` from one `AppendLine` and build: analyzer CA1305 fails the build. This repository runs with invariant globalization (section [2.2](#22-root-build-files)), so you cannot switch to `es-ES` here; in an ordinary project that line would print `12,50` on a Spanish machine.
+3. Remove `CultureInfo.InvariantCulture` from one `AppendLine` and build: nothing warns you (analyzer CA1305 does not check `StringBuilder`'s interpolated overloads), and with this repository's invariant globalization (section [2.2](#22-root-build-files)) the output does not even change. In an ordinary project on a Spanish machine that line would print `12,50`. That silent risk is why the test pins the exact string.
 
 #### Interview questions
 
@@ -1621,8 +1622,10 @@ Some customers order the same things every month: coffee and a book, say. The sh
 #### Without the pattern
 
 ```csharp
-// Copying by hand, field by field, in the caller:
-var next = new OrderTemplate { Name = template.Name, Lines = template.Lines };
+// A plain class with settable properties, copied by hand, field by field, in the caller:
+public sealed class PlainTemplate { public string Name { get; set; } = ""; public List<OrderLine> Lines { get; set; } = []; }
+
+var next = new PlainTemplate { Name = template.Name, Lines = template.Lines };
 next.Lines.Add(new OrderLine(SampleData.Mug, 1));
 // Oops: Lines is the same List object, so the template now has the mug too.
 ```
@@ -1640,7 +1643,7 @@ classDiagram
     class OrderTemplate {
         <<ConcretePrototype>>
         +string Name
-        +List~OrderLine~ Lines
+        +IList~OrderLine~ Lines
         +Clone() OrderTemplate
         +ShallowClone() OrderTemplate
     }
@@ -1674,13 +1677,15 @@ sequenceDiagram
 ```csharp
 // Role: ConcretePrototype — a monthly order that knows how to copy itself.
 // Guide: §4.5
-public sealed class OrderTemplate : IPrototype<OrderTemplate>
+public sealed class OrderTemplate(string name, IEnumerable<OrderLine> lines) : IPrototype<OrderTemplate>
 {
-    public required string Name { get; set; }
-    public required List<OrderLine> Lines { get; init; }
+    public string Name { get; set; } = name;
+
+    // Mutable on purpose: it is what makes the difference between a shallow and a deep copy visible.
+    public IList<OrderLine> Lines { get; } = new List<OrderLine>(lines);
 
     // Deep enough: a new list. The OrderLine records inside are immutable, so sharing them is safe.
-    public OrderTemplate Clone() => new() { Name = Name, Lines = [.. Lines] };
+    public OrderTemplate Clone() => new(Name, Lines);
 
     // MemberwiseClone copies the fields one by one: the copy gets the SAME list object.
     public OrderTemplate ShallowClone() => (OrderTemplate)MemberwiseClone();
@@ -1716,6 +1721,7 @@ var march = new RecurringOrder(Guid.NewGuid(), "Monthly coffee",
 
 // The prototype pattern in one expression: copy, then change what differs.
 var april = march with { Id = Guid.NewGuid(), NextDelivery = march.NextDelivery.AddMonths(1) };
+// In the code this expression lives in the record itself: march.ForNextMonth().
 ```
 
 Careful: **`with` is a shallow copy** too. It works safely here because `ImmutableArray<OrderLine>` cannot be modified: sharing it between `march` and `april` is harmless. With a `List<OrderLine>` property, `with` would share the list and bring back the bug from "Without the pattern". Records plus immutable collections are what make Prototype disappear.
