@@ -58,3 +58,6 @@ nunit-*.xml
 
 # Local implementation plan (not versioned)
 PLAN.md
+
+# Agent working files (plan workspace, ledger)
+.superpowers/
