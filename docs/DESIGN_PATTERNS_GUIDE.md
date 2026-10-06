@@ -3408,51 +3408,2727 @@ A BCL class that generates, at run time, an implementation of an interface that 
 
 ## 6. Behavioral patterns
 
-*Coming in a later phase.*
+**Behavioral** patterns are about **who does what, and how objects talk to each other**: which object handles a request, how a request is passed along, how an object reacts when another changes, how an algorithm is swapped. They mostly apply the principle "encapsulate what varies" (section [3.5](#35-the-principles-under-the-patterns)) to one kind of variation each.
+
+This is the chapter where C# changed the most since 1994. Delegates, lambdas, `event`, `yield return`, records and pattern matching absorbed several of these patterns into the language; the sections say so where it happens.
+
+| Pattern | Relevance | In one line |
+|---|---|---|
+| [6.1 Chain of Responsibility](#61-chain-of-responsibility) | ⭐⭐⭐ Essential | Pass a request along a chain of handlers; each one handles it, passes it on, or stops it. |
+| [6.2 Command](#62-command) | ⭐⭐ Useful | Turn a request into an object, so it can be stored, queued or undone. |
+| [6.3 Interpreter](#63-interpreter) | 🕰 Historical | Represent a small language as a tree of objects and evaluate it. |
+| [6.4 Iterator](#64-iterator) | ⭐⭐⭐ Essential | Walk through a collection without knowing how it is stored. Understand it; never hand-write it. |
+| [6.5 Mediator](#65-mediator) | ⭐⭐ Useful | Objects talk through one central object instead of to each other. |
+| [6.6 Memento](#66-memento) | ⭐ Niche | Capture an object's state so it can be restored later, without exposing it. |
+| [6.7 Observer](#67-observer) | ⭐⭐⭐ Essential | When one object changes, everyone interested is notified. |
+| [6.8 State](#68-state) | ⭐⭐ Useful | An object changes its behaviour when its state changes. |
+| [6.9 Strategy](#69-strategy) | ⭐⭐⭐ Essential | Swap one algorithm for another behind the same interface. |
+| [6.10 Template Method](#610-template-method) | ⭐⭐ Useful | A base class fixes the steps of an algorithm; subclasses fill in some of them. |
+| [6.11 Visitor](#611-visitor) | ⭐ Niche | Add operations to a fixed set of classes without changing them. |
 
 ### 6.1 Chain of Responsibility
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐⭐ Essential |
+| Family | Behavioral |
+| Intent | Avoid coupling the sender of a request to its receiver by giving several objects a chance to handle it; chain them and pass the request along. |
+| Also known as | Pipeline (in its modern form) |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- chain-of-responsibility` |
+| Code | [`src/Patterns.Behavioral/ChainOfResponsibility/`](../src/Patterns.Behavioral/ChainOfResponsibility/) |
+
+#### The problem
+
+Before an order is accepted, the shop checks it against several rules, in this order, and reports the **first** one that fails:
+
+| # | Rule | Message when it fails |
+|---|---|---|
+| 1 | The order has lines. | `Order has no lines.` |
+| 2 | No line has more than 10 units. | `At most 10 units per product.` |
+| 3 | There is stock for every line. | `Not enough stock for <name>.` |
+| 4 | The shop ships to the country (`ES`, `PT`, `FR`). | `We do not ship to <country>.` |
+
+Each check returns an `OrderCheck(bool IsValid, string? Error)`, with `OrderCheck.Ok` and `OrderCheck.Fail(message)`. Rules will be added (fraud, minimum amount), removed and reordered.
+
+*Analogy:* a support hotline. The first-level agent solves what they can and passes the rest to the second level, who passes what they cannot solve to an engineer. You do not choose who answers; you call once and the request travels until someone handles it.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/ChainOfResponsibility/0-Problem/):
+
+```csharp
+public sealed class OrderValidator
+{
+    // PAIN: one method knows every rule and their order. Adding, removing or reordering a rule
+    // means editing (and re-testing) this method.
+    public OrderCheck Validate(Order order)
+    {
+        if (order.Lines.Count == 0) return OrderCheck.Fail("Order has no lines.");
+        if (order.Lines.Any(l => l.Quantity > 10)) return OrderCheck.Fail("At most 10 units per product.");
+        var missing = order.Lines.FirstOrDefault(l => l.Product.Stock < l.Quantity);
+        if (missing is not null) return OrderCheck.Fail($"Not enough stock for {missing.Product.Name}.");
+        if (order.ShippingAddress.Country is not ("ES" or "PT" or "FR"))
+            return OrderCheck.Fail($"We do not ship to {order.ShippingAddress.Country}.");
+        return OrderCheck.Ok;
+    }
+}
+```
+
+For four rules this is honestly fine. It starts to hurt when rules multiply, need their own dependencies (a fraud service, the stock database), or different checkouts need different sets of rules.
+
+#### Structure
+
+```mermaid
+classDiagram
+    class OrderRule {
+        <<Handler>>
+        -OrderRule? _next
+        +SetNext(OrderRule next) OrderRule
+        +Check(Order order) OrderCheck
+        #Passes(Order order)* OrderCheck
+    }
+    class NotEmptyRule {
+        <<ConcreteHandler>>
+    }
+    class MaxQuantityRule {
+        <<ConcreteHandler>>
+    }
+    class StockRule {
+        <<ConcreteHandler>>
+    }
+    class ShippingCountryRule {
+        <<ConcreteHandler>>
+    }
+    OrderRule <|-- NotEmptyRule
+    OrderRule <|-- MaxQuantityRule
+    OrderRule <|-- StockRule
+    OrderRule <|-- ShippingCountryRule
+    OrderRule --> OrderRule : next
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Handler | `OrderRule` | Holds the next handler; `Check` runs this rule and, if it passes, asks the next one. |
+| ConcreteHandler | `NotEmptyRule`, `MaxQuantityRule`, `StockRule`, `ShippingCountryRule` | One rule each. |
+| Client | the checkout | Builds the chain once and calls `Check` on the first link. |
+
+The self-reference (`OrderRule --> OrderRule : next`) is the chain.
+
+#### How it runs
+
+An empty order to the United States: the first rule fails, and the others never run.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant R1 as NotEmptyRule
+    participant R2 as MaxQuantityRule
+    participant R3 as StockRule
+    Client->>R1: Check(order)
+    Note right of R1: no lines: fail here
+    R1-->>Client: Fail("Order has no lines.")
+    Note over R2,R3: never called
+```
+
+For a valid order (two books to Madrid), each rule passes and calls the next; the last one returns `OrderCheck.Ok`, which travels back to the client.
+
+#### By hand
+
+```csharp
+// Role: Handler — one rule in the chain; knows only the next link.
+// Guide: §6.1
+public abstract class OrderRule
+{
+    private OrderRule? _next;
+
+    // Returns the next rule, so a chain reads as a sentence: a.SetNext(b).SetNext(c).
+    public OrderRule SetNext(OrderRule next) => _next = next;
+
+    public OrderCheck Check(Order order)
+    {
+        var result = Passes(order);
+        if (!result.IsValid) return result;           // stop: first failure wins
+        return _next?.Check(order) ?? OrderCheck.Ok;  // pass it on (or we were the last)
+    }
+
+    protected abstract OrderCheck Passes(Order order);
+}
+
+// Role: ConcreteHandler — refuses orders without lines.
+public sealed class NotEmptyRule : OrderRule
+{
+    protected override OrderCheck Passes(Order order) =>
+        order.Lines.Count == 0 ? OrderCheck.Fail("Order has no lines.") : OrderCheck.Ok;
+}
+
+// Building the chain: the order of the rules is visible in one place.
+var rules = new NotEmptyRule();
+rules.SetNext(new MaxQuantityRule()).SetNext(new StockRule()).SetNext(new ShippingCountryRule());
+var check = rules.Check(order);
+```
+
+Each rule is a small class with one reason to change. Adding a rule is a new class and one more `SetNext`; reordering is moving it in that line. The GoF form lets a handler *either* handle the request *or* pass it; here every handler does its part and passes on unless it fails, which is the common modern variant (a **pipeline**).
+
+#### In .NET
+
+**ASP.NET Core middleware** is Chain of Responsibility, and it is the most important instance of the pattern in .NET ([`2-DotNet/`](../src/Patterns.Behavioral/ChainOfResponsibility/2-DotNet/)). Every HTTP request goes through a chain of middleware; each one can do work before and after the next one, or **short-circuit** (answer and not call the next one at all). The DotNet level builds a pipeline in memory, without a web server, and calls it with a fake request:
+
+```csharp
+// Guide: §6.1
+public static class OrderPipeline
+{
+    public static RequestDelegate Build(List<string> trace)
+    {
+        var app = new ApplicationBuilder(new ServiceCollection().BuildServiceProvider());
+
+        app.Use(async (context, next) =>
+        {
+            trace.Add("correlation");
+            context.Response.Headers["X-Correlation-Id"] = "abc-123";
+            await next(context);
+        });
+        app.Use(async (context, next) =>
+        {
+            trace.Add("auth");
+            if (!context.Request.Headers.ContainsKey("X-Customer-Id"))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return; // short-circuit: next is never called, the rest of the chain never runs
+            }
+            await next(context);
+        });
+        app.Use(async (context, next) =>
+        {
+            trace.Add("log");
+            await next(context);
+        });
+        app.Run(async context => // terminal: no next
+        {
+            trace.Add("endpoint");
+            await context.Response.WriteAsync("order accepted");
+        });
+
+        return app.Build(); // one RequestDelegate: the whole chain, nested
+    }
+}
+
+var trace = new List<string>();
+var context = new DefaultHttpContext();
+context.Request.Headers["X-Customer-Id"] = "ana";
+await OrderPipeline.Build(trace)(context);
+// trace: ["correlation", "auth", "log", "endpoint"]; without the header: ["correlation", "auth"] and 401
+```
+
+**How the chain is built.** `Use` does not run anything; it records a function that, given the *next* delegate, returns a new delegate. `Build()` composes them **from the last to the first**: it starts from a built-in delegate that answers 404 (Not Found), wraps it with the terminal component that `Run` added (which never calls its next, so the 404 is never reached), wraps that with the "log" middleware, then "auth", then "correlation". A pipeline without `Run` therefore answers 404 to everything that reaches its end. The result is one `RequestDelegate` made of nested delegates:
+
+```mermaid
+flowchart LR
+    R([request]) --> C
+    subgraph C [correlation]
+        direction LR
+        subgraph A [auth]
+            direction LR
+            subgraph L [log]
+                direction LR
+                E[endpoint]
+            end
+        end
+    end
+    A -. no X-Customer-Id: 401, stop .-> X([response])
+    E --> X
+```
+
+This is why the **order of `app.Use…` calls matters** in `Program.cs`: authentication must come before authorization, exception handling before everything it should catch. Each middleware is also a decorator ([5.4](#54-decorator)) around the rest of the pipeline: it can act before *and* after `await next(context)`.
+
+Other chains in .NET: `DelegatingHandler` chains in `HttpClient` (section [5.4](#54-decorator)), and MVC filters (which can short-circuit an action).
+
+#### When to use it
+
+- A request goes through **several independent steps** (validation rules, middleware, approval levels) whose number and order change.
+- Any step may need to **stop** the processing.
+- Different entry points need different combinations of the same steps.
+
+#### When NOT to use it
+
+- **A handful of fixed checks:** a method with a few `if`s, as in "Without the pattern", is clearer.
+- **Every step must always run and none can stop the others:** that is a list of steps (`foreach (var rule in rules)`), not a chain.
+- **You need all the errors, not the first one** (a form showing every invalid field): collect results from a list of validators instead.
+- **The order is hard to see:** if the chain is assembled in many places, nobody knows what runs. Build it in one place.
+
+#### Costs
+
+- A request may reach the end without being handled; decide what the end of the chain does.
+- Debugging means stepping through several objects; stack traces are deep (very visible in ASP.NET Core).
+- The order is a hidden contract between handlers.
+
+#### Relevance today
+
+⭐⭐⭐ **Essential.** Every ASP.NET Core application is a chain of middleware, and every `HttpClient` a chain of handlers. You configure one in every web project, and understanding it explains why order in `Program.cs` matters.
+
+#### Relatives
+
+- **Decorator** ([5.4](#54-decorator)): same nesting; a decorator always calls the inner object, a chain link may stop.
+- **Command** ([6.2](#62-command)): the request passed along a chain is often a command object.
+- **Composite** ([5.3](#53-composite)): a request can travel up a tree from a child to its parents, which is the original GoF example (help in a UI).
+- Section [9.1](#91-combinations-you-will-meet-in-real-code) shows middleware as Chain of Responsibility plus Decorator.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- chain-of-responsibility
+```
+
+1. Move `ShippingCountryRule` to the front and validate an empty order to `"US"`: which message wins now?
+2. Write a `MinimumTotalRule` (orders under 10.00 are refused) and add it to the chain without touching the other rules.
+3. Swap the "auth" and "log" middleware and send a request without the header: what does the trace say?
+
+#### Interview questions
+
+<details>
+<summary>How is ASP.NET Core middleware an example of Chain of Responsibility?</summary>
+
+Each middleware receives the request and a `next` delegate; it can do work and call `next` to pass the request on, or answer directly and short-circuit the rest. `Build()` nests them into a single `RequestDelegate`.
+</details>
+
+<details>
+<summary>Why does the order of <code>app.Use</code> calls matter?</summary>
+
+Middleware runs in registration order on the way in (and reverse order on the way out). A middleware can only affect what comes after it, so, for example, authentication must be registered before authorization and exception handling before the code whose exceptions it should catch.
+</details>
+
+<details>
+<summary>When would you use a list of validators instead of a chain?</summary>
+
+When every rule must run and you want all the errors at once (form validation), or when no rule needs to stop the others.
+</details>
 
 ### 6.2 Command
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐ Useful |
+| Family | Behavioral |
+| Intent | Encapsulate a request as an object, so it can be stored, queued, logged or undone. |
+| Also known as | Action, Transaction |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- command` |
+| Code | [`src/Patterns.Behavioral/Command/`](../src/Patterns.Behavioral/Command/) |
+
+#### The problem
+
+The shopping cart has **undo**: add two books, add a mug, remove the books, then undo three times and the cart is empty again. For that, the cart's history must remember not only *what* was done, but *how to reverse it*.
+
+Every level uses a `Cart` (the **receiver**: the object that does the real work) with `Items` (product id → quantity), `Add(product, quantity)` and `Remove(productId)` (removing a product that is not there does nothing).
+
+*Analogy:* a restaurant order slip. The waiter does not cook; they write the order on a slip and hand it to the kitchen. The slip can wait in a queue, be cancelled, or be kept to know what was served. The request has become a **thing**.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/Command/0-Problem/):
+
+```csharp
+public sealed class UndoableCart(Cart cart)
+{
+    private string? _lastAction;
+    private Product? _lastProduct;
+    private int _lastQuantity;
+
+    public void Add(Product product, int quantity)
+    {
+        cart.Add(product, quantity);
+        (_lastAction, _lastProduct, _lastQuantity) = ("add", product, quantity);
+    }
+
+    public void Undo()
+    {
+        // PAIN: only the last action is remembered (one level of undo), and every new action
+        // ("apply coupon", "change quantity") adds a case to this switch.
+        switch (_lastAction)
+        {
+            case "add": cart.Remove(_lastProduct!.Id); break;
+            case "remove": cart.Add(_lastProduct!, _lastQuantity); break;
+        }
+        _lastAction = null;
+    }
+}
+```
+
+#### Structure
+
+```mermaid
+classDiagram
+    class ICartCommand {
+        <<Command>>
+        +Execute()
+        +Undo()
+    }
+    class AddItemCommand {
+        <<ConcreteCommand>>
+    }
+    class RemoveItemCommand {
+        <<ConcreteCommand>>
+        -int _removedQuantity
+    }
+    class Cart {
+        <<Receiver>>
+        +Add(Product product, int quantity)
+        +Remove(Guid productId)
+    }
+    class CartHistory {
+        <<Invoker>>
+        -Stack~ICartCommand~ _done
+        +Run(ICartCommand command)
+        +Undo() bool
+    }
+    ICartCommand <|.. AddItemCommand
+    ICartCommand <|.. RemoveItemCommand
+    AddItemCommand --> Cart
+    RemoveItemCommand --> Cart
+    CartHistory o-- ICartCommand
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Command | `ICartCommand` | `Execute()` and `Undo()`. |
+| ConcreteCommand | `AddItemCommand`, `RemoveItemCommand` | Hold the receiver and the parameters, and remember what they need to undo themselves. |
+| Receiver | `Cart` | Does the real work. Knows nothing about commands. |
+| Invoker | `CartHistory` | Runs commands and keeps them on a stack to undo them later. |
+| Client | the cart UI | Creates the commands and gives them to the invoker. |
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant History as CartHistory
+    participant Remove as RemoveItemCommand
+    participant Cart
+    Client->>History: Run(remove book)
+    History->>Remove: Execute()
+    Remove->>Cart: Remove(book.Id)
+    Note right of Remove: remembers that 2 books were removed
+    History->>History: push(command)
+    Client->>History: Undo()
+    History->>History: pop() the command
+    History->>Remove: Undo()
+    Remove->>Cart: Add(book, 2)
+    History-->>Client: true
+```
+
+#### By hand
+
+```csharp
+// Role: Command — a cart operation that can be done and undone.
+// Guide: §6.2
+public interface ICartCommand
+{
+    void Execute();
+    void Undo();
+}
+
+// Role: ConcreteCommand — removes a product, remembering how many there were.
+public sealed class RemoveItemCommand(Cart cart, Product product) : ICartCommand
+{
+    private int _removedQuantity;
+
+    public void Execute()
+    {
+        _removedQuantity = cart.Items.GetValueOrDefault(product.Id); // 0 if it was not there
+        cart.Remove(product.Id);
+    }
+
+    public void Undo()
+    {
+        if (_removedQuantity > 0) cart.Add(product, _removedQuantity); // nothing removed, nothing to restore
+    }
+}
+
+// Role: Invoker — runs commands and keeps them for undo; it never knows what a command does.
+public sealed class CartHistory
+{
+    private readonly Stack<ICartCommand> _done = new();
+
+    public void Run(ICartCommand command)
+    {
+        command.Execute();
+        _done.Push(command);
+    }
+
+    public bool Undo()
+    {
+        if (!_done.TryPop(out var command)) return false;
+        command.Undo();
+        return true;
+    }
+}
+```
+
+`AddItemCommand` remembers the quantity the product had before, so its `Undo` puts the cart back exactly as it was. Undo now has **unlimited levels** (a stack), and a new operation is a new command class; `CartHistory` never changes. `RemoveItemCommand` takes the `Product`, not just its id, so `Undo` can add it back.
+
+Because a request is now an object, you can also: **queue** it (run later, in a background worker), **log** it (an audit trail of what users did), **retry** it, or send it over the wire (the request objects of a web API are commands).
+
+#### In .NET
+
+In C#, a command with one method is just a **delegate**. `Action` (no return value) and `Func<T>` are commands as values. With undo, a command is a pair of delegates ([`2-DotNet/`](../src/Patterns.Behavioral/Command/2-DotNet/)):
+
+```csharp
+// Guide: §6.2
+public sealed record UndoableAction(string Name, Action Do, Action Undo);
+
+public sealed class ActionHistory
+{
+    private readonly Stack<UndoableAction> _done = new();
+
+    public void Run(UndoableAction action) { action.Do(); _done.Push(action); }
+
+    public bool Undo()
+    {
+        if (!_done.TryPop(out var action)) return false;
+        action.Undo();
+        return true;
+    }
+}
+
+// Each command is written where it is created, as two lambdas over the cart.
+var before = cart.Items.GetValueOrDefault(SampleData.Book.Id); // what undo must restore
+history.Run(new UndoableAction("add 2 x Clean Code",
+    Do: () => cart.Add(SampleData.Book, 2),
+    Undo: () =>
+    {
+        cart.Remove(SampleData.Book.Id);
+        if (before > 0) cart.Add(SampleData.Book, before);
+    }));
+```
+
+The lambdas **capture** the cart and the product (a *closure*: a function that keeps references to the variables around it), which is exactly what a ConcreteCommand's fields did. No classes, same pattern. The `Name` is there for an "undo add 2 x Clean Code" menu item or a log.
+
+Other commands you meet in .NET: `ICommand` in WPF and MAUI (buttons bound to commands, with `CanExecute`); the request objects of the Mediator section ([6.5](#65-mediator)); work items queued to a `Channel<T>` or a background queue; `Task.Run(() => …)` takes a command.
+
+#### When to use it
+
+- **Undo/redo**, history, or replay.
+- Requests must be **queued, scheduled, retried or logged** before or instead of being run now.
+- The code that *decides* what to do is separate from the code that *does* it (a button and an action; a web request and its handler).
+
+#### When NOT to use it
+
+- **The action runs immediately and is never stored, undone or queued:** call the method.
+- **A command class per method "for consistency":** if nothing needs to treat the request as data, the class is ceremony. Simpler alternative: a delegate.
+- **Undo of things you cannot undo** (an email already sent, a payment captured): a command with an `Undo` that pretends is worse than none. Use compensating actions with their own rules.
+
+#### Costs
+
+- One class per operation in the class-based form.
+- Commands that remember state for undo must capture it correctly at `Execute` time; bugs here are subtle (undoing the wrong quantity).
+
+#### Relevance today
+
+⭐⭐ **Useful.** Delegates made one-method commands part of the language, and request objects in web APIs and message handlers are commands by another name. The full pattern with undo is mostly found in editors, design tools and UI frameworks.
+
+#### Relatives
+
+- **Memento** ([6.6](#66-memento)) is the other way to undo: save the whole state instead of reversing each operation. Section [9.1](#91-combinations-you-will-meet-in-real-code) combines them.
+- **Strategy** ([6.9](#69-strategy)) also wraps behaviour in an object; a strategy is *how* to do something, a command is *a request to do* something. Comparison in [8.5](#85-command-and-strategy).
+- **Chain of Responsibility** ([6.1](#61-chain-of-responsibility)) passes commands along; **Mediator** ([6.5](#65-mediator)) dispatches them to handlers.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- command
+```
+
+1. Add a **redo** stack to `CartHistory`: undone commands go there, `Redo()` runs them again, and a new `Run` clears it.
+2. Call `Undo()` twice on the Problem version and look at the cart.
+3. Write a `ClearCartCommand` that removes everything and restores everything on undo.
+
+#### Interview questions
+
+<details>
+<summary>What does turning a request into an object give you?</summary>
+
+You can store it, queue it, log it, retry it, send it elsewhere, and undo it, because the request now exists as data separate from the moment it is executed.
+</details>
+
+<details>
+<summary>How do delegates relate to the Command pattern?</summary>
+
+A delegate (`Action`, `Func<T>`) is a command with one method; lambdas capture the receiver and parameters, which a ConcreteCommand would hold in fields. For undo you pair two delegates.
+</details>
+
+<details>
+<summary>Command or Memento for undo?</summary>
+
+Command reverses each operation and stores only what each needs; it is efficient but every command must know how to undo itself. Memento stores snapshots of the whole state; it is simple and always correct but costs memory per snapshot.
+</details>
 
 ### 6.3 Interpreter
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | 🕰 Historical — you rarely write one; you use the ones .NET has |
+| Family | Behavioral |
+| Intent | Given a language, define a representation for its grammar and an interpreter that uses it to evaluate sentences. |
+| Also known as | — |
+| Levels | Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- interpreter` |
+| Code | [`src/Patterns.Behavioral/Interpreter/`](../src/Patterns.Behavioral/Interpreter/) |
+
+#### The problem
+
+The marketing team wants to write discount rules themselves, as text, without a deployment:
+
+```
+total > 100 AND category = 'books'
+```
+
+means "orders over 100.00 that contain at least one book". The shop must **understand** such sentences and evaluate them against an order.
+
+The language is tiny. Its **grammar** (the rules that say which sentences are valid) is:
+
+| Rule | Means | Example |
+|---|---|---|
+| `rule := condition ("AND" condition)*` | One or more conditions joined by `AND`. | `total > 100 AND category = 'books'` |
+| `condition := "total" (">" \| ">=") number` | The order total compared with a number. | `total >= 100` |
+| `condition := "category" "=" "'" text "'"` | Some line of the order is in that category. | `category = 'books'` |
+
+Keywords are case-insensitive (`TOTAL`, `and`), categories are compared ignoring case, numbers use a dot (`99.90`).
+
+*Analogy:* musical notation. A score is a sentence in a small language; a musician *interprets* it, symbol by symbol, to produce music.
+
+#### Without the pattern
+
+```csharp
+// Ad-hoc string handling: works for this exact sentence, breaks for the next one.
+var parts = rule.Split(" AND ");
+var limit = decimal.Parse(parts[0].Replace("total > ", ""), CultureInfo.InvariantCulture);
+var category = parts[1].Replace("category = '", "").TrimEnd('\'');
+// ">=" breaks it, a third condition breaks it, "Total" breaks it, and nobody can tell why.
+```
+
+What hurts: no structure. Every new feature of the language is another `Replace`, and invalid input produces nonsense instead of a clear error.
+
+#### Structure
+
+The Interpreter pattern turns each grammar rule into a class. A parsed sentence becomes a **tree** of those objects (an *abstract syntax tree*, AST), and evaluating the sentence means asking the root to interpret itself.
+
+```mermaid
+classDiagram
+    class IRuleExpression {
+        <<AbstractExpression>>
+        +Interpret(Order order) bool
+    }
+    class TotalGreaterThan {
+        <<TerminalExpression>>
+        +decimal Amount
+        +bool OrEqual
+    }
+    class HasCategory {
+        <<TerminalExpression>>
+        +string Name
+    }
+    class AndExpression {
+        <<NonterminalExpression>>
+        +IRuleExpression Left
+        +IRuleExpression Right
+    }
+    class DiscountRuleParser {
+        +Parse(string rule)$ IRuleExpression
+    }
+    IRuleExpression <|.. TotalGreaterThan
+    IRuleExpression <|.. HasCategory
+    IRuleExpression <|.. AndExpression
+    AndExpression o-- IRuleExpression
+    DiscountRuleParser ..> IRuleExpression : builds
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| AbstractExpression | `IRuleExpression` | `Interpret(order)`. |
+| TerminalExpression | `TotalGreaterThan`, `HasCategory` | Leaves of the tree: a single condition. |
+| NonterminalExpression | `AndExpression` | Combines other expressions. |
+| Context | the `Order` | What the sentence is evaluated against. |
+| (Parser) | `DiscountRuleParser` | Turns text into the tree. GoF leaves parsing out of the pattern; you always need one. |
+
+The sample rule becomes this tree:
+
+```mermaid
+flowchart TD
+    A["AndExpression"] --> T["TotalGreaterThan(100, orEqual: false)"]
+    A --> C["HasCategory('books')"]
+```
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Root as AndExpression
+    participant Total as TotalGreaterThan(100)
+    participant Cat as HasCategory("books")
+    Client->>Root: Interpret(9 books, 112.50)
+    Root->>Total: Interpret(order)
+    Total-->>Root: true (112.50 > 100)
+    Root->>Cat: Interpret(order)
+    Cat-->>Root: true
+    Root-->>Client: true
+```
+
+#### By hand
+
+```csharp
+// Role: AbstractExpression — any piece of a discount rule.
+// Guide: §6.3
+public interface IRuleExpression
+{
+    bool Interpret(Order order);
+}
+
+// Role: TerminalExpression — "total > n" or "total >= n".
+public sealed record TotalGreaterThan(decimal Amount, bool OrEqual) : IRuleExpression
+{
+    public bool Interpret(Order order) => OrEqual ? order.Total >= Amount : order.Total > Amount;
+}
+
+// Role: TerminalExpression — "category = 'x'": some line is in that category.
+public sealed record HasCategory(string Name) : IRuleExpression
+{
+    public bool Interpret(Order order) =>
+        order.Lines.Any(l => string.Equals(l.Product.Category.Name, Name, StringComparison.OrdinalIgnoreCase));
+}
+
+// Role: NonterminalExpression — both sides must hold.
+// Named AndExpression, not And: "And" is a Visual Basic keyword and analyzer CA1716 rejects it as a type name.
+public sealed record AndExpression(IRuleExpression Left, IRuleExpression Right) : IRuleExpression
+{
+    public bool Interpret(Order order) => Left.Interpret(order) && Right.Interpret(order);
+}
+```
+
+`DiscountRuleParser.Parse(text)` splits the text into **tokens** (words, numbers, `>`, `>=`, `=`, quoted text) and follows the grammar table: read a condition, then while the next token is `AND`, read another and combine them with `AndExpression`. That style, one method per grammar rule, is called a **recursive descent parser**. Invalid input fails with a position: `"total >> 5"` → `FormatException("Unexpected '>' at position 7.")` (positions count characters from 0), `"total >"` → `"Unexpected end of rule."`, `"price > 5"` → `"Unexpected 'price' at position 0."`.
+
+With the rule `total > 100 AND category = 'books'`: 9 books (112.50) → true; 7 books (87.50) → false; 2 headphones (119.80) → false, no book.
+
+#### In .NET
+
+**Expression trees** (`System.Linq.Expressions`) are .NET's built-in representation of code as a tree of objects, and they can be **compiled** to real, fast code. The DotNet level parses the rule with the same parser and then translates the tree into an expression tree ([`2-DotNet/`](../src/Patterns.Behavioral/Interpreter/2-DotNet/)):
+
+```csharp
+// Guide: §6.3
+public static class RuleCompiler
+{
+    public static Func<Order, bool> Compile(string rule)
+    {
+        var order = Expression.Parameter(typeof(Order), "order");
+        var body = Translate(DiscountRuleParser.Parse(rule), order);
+        return Expression.Lambda<Func<Order, bool>>(body, order).Compile(); // IL (Intermediate Language, what C# compiles to), as if hand-written
+    }
+
+    private static Expression Translate(IRuleExpression node, ParameterExpression order) => node switch
+    {
+        TotalGreaterThan t when t.OrEqual => Expression.GreaterThanOrEqual(Total(order), Expression.Constant(t.Amount)),
+        TotalGreaterThan t => Expression.GreaterThan(Total(order), Expression.Constant(t.Amount)),
+        HasCategory c => AnyLineIn(order, c.Name),          // a call to Enumerable.Any over order.Lines
+        AndExpression a => Expression.AndAlso(Translate(a.Left, order), Translate(a.Right, order)),
+        _ => throw new NotSupportedException(node.GetType().Name),
+    };
+    // Total(order) = Expression.Property(order, nameof(Order.Total)); AnyLineIn builds
+    // Expression.Call(typeof(Enumerable), nameof(Enumerable.Any), [typeof(OrderLine)], lines, predicate).
+}
+```
+
+The difference from the Classic level: Classic **walks the tree every time** it evaluates a rule; the compiled version walks it **once**, produces a delegate, and evaluating is then a normal method call. Expression trees are also how Entity Framework translates `Where(p => p.Price > 100)` into SQL (for properties mapped to columns) (section [7.5](#75-specification)): instead of compiling the tree, it *reads* it.
+
+**`Regex`** is the other interpreter in the BCL: the pattern string is a sentence in the regular-expression language; `Regex` parses it into a tree and interprets it against the input (or compiles it with `RegexOptions.Compiled`, or generates C# for it at build time with `[GeneratedRegex]`).
+
+#### When to use it
+
+- A **small, stable language** that non-developers or configuration must express (rules, filters, search queries), and the grammar fits on one screen.
+- You need to evaluate the same sentence many times, or translate it into something else (SQL, an expression tree).
+
+#### When NOT to use it
+
+- **The language is large or will grow:** use a parser generator (ANTLR), or an existing language (C# scripting, JSON-based rules, a SQL `WHERE`). Hand-written interpreters do not scale.
+- **The "language" is a fixed set of options:** a form with fields (minimum total, category) is simpler and safer than free text.
+- **Performance matters and you walk the tree every time:** compile it (expression trees) or cache the result.
+
+#### Costs
+
+- One class per grammar rule; complex grammars become many classes.
+- You must write and maintain a parser, error messages and tests for every edge of the grammar.
+- A text language users can write is also a source of support questions and security concerns (validate and limit it).
+
+#### Relevance today
+
+🕰 **Historical.** As a hand-written pattern it is rare: you use the interpreters .NET already has (expression trees, `Regex`, LINQ providers) or a parser generator. Studying it explains how those work, and expression trees are everyday in EF Core.
+
+#### Relatives
+
+- **Composite** ([5.3](#53-composite)): the syntax tree *is* a composite (`AndExpression` holds expressions).
+- **Visitor** ([6.11](#611-visitor)) adds operations over the tree (print it, translate it) without changing the node classes; `ExpressionVisitor` is exactly that for expression trees.
+- **Specification** ([7.5](#75-specification)) is a small interpreter of business rules built from code instead of text.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- interpreter
+```
+
+1. Add `OR` to the grammar. Where does it go, and does `AND` bind tighter than `OR`?
+2. Feed the parser `"total >> 5"` and other broken rules; are the messages useful to a marketing user?
+3. Time 1,000,000 evaluations with `Interpret` and with the compiled delegate.
+
+#### Interview questions
+
+<details>
+<summary>What is an abstract syntax tree?</summary>
+
+The tree of objects a parser builds from a sentence: each node is a grammar construct (a condition, an AND), and leaves are the simplest pieces. Interpreting, translating or printing the sentence means walking the tree.
+</details>
+
+<details>
+<summary>Where does .NET use the Interpreter idea?</summary>
+
+Expression trees (`System.Linq.Expressions`), which LINQ providers like EF Core read and translate to SQL, and `Regex`, which parses a pattern into a tree and evaluates it.
+</details>
 
 ### 6.4 Iterator
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐⭐ Essential — understand it; never hand-write it |
+| Family | Behavioral |
+| Intent | Access the elements of a collection one by one without exposing how it is stored. |
+| Also known as | Cursor, Enumerator |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- iterator` |
+| Code | [`src/Patterns.Behavioral/Iterator/`](../src/Patterns.Behavioral/Iterator/) |
+
+#### The problem
+
+The order history page shows orders in **pages** of a fixed size: 7 orders with a page size of 3 give pages of 3, 3 and 1. The caller should not care whether the history is a list, a database or a remote API; it wants "the next page" until there are no more. A page size below 1 is an error (`ArgumentOutOfRangeException`).
+
+*Analogy:* a TV remote's "next channel" button. You go through the channels one by one without knowing how the TV stores them.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/Iterator/0-Problem/):
+
+```csharp
+public sealed class OrderHistory
+{
+    public List<Order> Orders { get; } = []; // PAIN: the storage is public; callers depend on it being a List
+}
+
+// Every caller repeats the paging arithmetic:
+for (var start = 0; start < history.Orders.Count; start += pageSize)
+{
+    // PAIN: Math.Min and the bounds are easy to get wrong (an off-by-one here loses the last page).
+    var page = history.Orders.GetRange(start, Math.Min(pageSize, history.Orders.Count - start));
+    Show(page);
+}
+```
+
+What hurts: the history cannot change its storage (to a database, to pages from an API) without breaking every caller, and the paging logic is copied everywhere with its bugs.
+
+#### Structure
+
+```mermaid
+classDiagram
+    class IIterator~T~ {
+        <<Iterator>>
+        +bool HasNext
+        +GetNext() T
+    }
+    class PageIterator {
+        <<ConcreteIterator>>
+        -int _position
+    }
+    class OrderHistory {
+        <<ConcreteAggregate>>
+        -List~Order~ _orders
+        +Pages(int pageSize) IIterator
+    }
+    IIterator~T~ <|.. PageIterator
+    OrderHistory ..> PageIterator : creates
+    PageIterator --> OrderHistory : reads
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Iterator | `IIterator<T>` | `HasNext` and `GetNext()`. |
+| ConcreteIterator | `PageIterator` | Remembers where it is and builds the next page. |
+| Aggregate | `OrderHistory` | Holds the orders privately and creates iterators over them. |
+
+In .NET the same roles have standard names: `IEnumerable<T>` is the Aggregate (it has `GetEnumerator()`), `IEnumerator<T>` is the Iterator (`MoveNext()`, `Current`).
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant History as OrderHistory
+    participant It as PageIterator
+    Client->>History: Pages(3)
+    History-->>Client: iterator at position 0
+    loop while HasNext
+        Client->>It: HasNext
+        It-->>Client: true
+        Client->>It: GetNext()
+        It-->>Client: page of 3, 3, then 1 orders
+    end
+    Client->>It: HasNext
+    It-->>Client: false
+```
+
+#### By hand
+
+```csharp
+// Role: Iterator — walks a sequence one element at a time.
+// Guide: §6.4
+public interface IIterator<out T>
+{
+    bool HasNext { get; }
+    T GetNext(); // GoF calls it Next(); that is a Visual Basic keyword, which analyzer CA1716 rejects
+}
+
+// Role: ConcreteAggregate — keeps its storage private and hands out iterators.
+public sealed class OrderHistory(IEnumerable<Order> orders)
+{
+    private readonly List<Order> _orders = [.. orders];
+
+    public IIterator<IReadOnlyList<Order>> Pages(int pageSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        return new PageIterator(_orders, pageSize);
+    }
+
+    // Role: ConcreteIterator — remembers where it is; the caller never sees an index.
+    private sealed class PageIterator(List<Order> orders, int pageSize) : IIterator<IReadOnlyList<Order>>
+    {
+        private int _position;
+
+        public bool HasNext => _position < orders.Count;
+
+        public IReadOnlyList<Order> GetNext()
+        {
+            if (!HasNext) throw new InvalidOperationException("No more pages.");
+            var page = orders.GetRange(_position, Math.Min(pageSize, orders.Count - _position));
+            _position += page.Count;
+            return page;
+        }
+    }
+}
+```
+
+The paging arithmetic exists once, the list is private, and the iterator is a nested class with access to it. An empty history has no pages: `HasNext` is `false` from the start.
+
+#### In .NET
+
+You should **never write that class**: C# writes it for you. A method that returns `IEnumerable<T>` and uses `yield return` is turned by the compiler into an iterator ([`2-DotNet/`](../src/Patterns.Behavioral/Iterator/2-DotNet/)):
+
+```csharp
+// Guide: §6.4
+public IEnumerable<IReadOnlyList<Order>> Pages(int pageSize)
+{
+    ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1); // see the note on laziness below
+    return PagesCore(pageSize);
+}
+
+private IEnumerable<IReadOnlyList<Order>> PagesCore(int pageSize)
+{
+    for (var start = 0; start < _orders.Count; start += pageSize)
+        yield return _orders.GetRange(start, Math.Min(pageSize, _orders.Count - start));
+}
+```
+
+**What `foreach` really does.** `foreach (var page in history.Pages(3)) Show(page);` is compiled into roughly:
+
+```csharp
+using (IEnumerator<IReadOnlyList<Order>> e = history.Pages(3).GetEnumerator())
+{
+    while (e.MoveNext())      // "HasNext + advance" in one call
+    {
+        var page = e.Current; // "the element where we are"
+        Show(page);
+    }
+}                             // Dispose: lets the iterator clean up (close a file, a connection)
+```
+
+**What `yield return` really does.** The compiler rewrites the method into a hidden class that implements `IEnumerator<T>`, with a field holding a **state** number (where the method was paused) and fields for its local variables (`start`). Each `MoveNext()` runs the method's code from where it stopped until the next `yield return`, stores the value in `Current`, remembers the position and returns `true`; when the method ends, `MoveNext()` returns `false`. It is a **state machine** generated from ordinary-looking code, the same idea the compiler uses for `async`/`await`.
+
+**Laziness.** Nothing in an iterator method runs until someone starts enumerating, and then only as far as they go. `history.Pages(3).First()` builds **one** page, never the rest; the test `Yield_IsLazy` uses a counting source to prove it. Two consequences:
+
+- Argument checks inside an iterator method would also be delayed until the first `MoveNext()`. That is why `Pages` checks `pageSize` and then calls a separate `PagesCore` that holds the `yield`.
+- Enumerating twice runs the code twice. If the source is expensive (a database query), materialise it once with `ToList()`.
+
+**`IAsyncEnumerable<T>`** is the same pattern when getting each element needs `await` (a page from an API, rows from a database):
+
+```csharp
+public static async IAsyncEnumerable<Order> StreamAsync(FakeOrderApi api)
+{
+    for (var page = 1; ; page++)
+    {
+        var orders = await api.GetPageAsync(page); // a call only when the consumer asks for more
+        if (orders.Count == 0) yield break;
+        foreach (var order in orders) yield return order;
+    }
+}
+
+await foreach (var order in StreamAsync(api)) { /* api.Calls grows as you consume */ }
+```
+
+For in-memory paging, LINQ already has it: `orders.Chunk(3)` (.NET 6+) returns the pages as arrays.
+
+#### When to use it
+
+- Always, through `IEnumerable<T>` / `yield return`: expose sequences as `IEnumerable<T>` (or `IReadOnlyList<T>`) instead of the concrete collection.
+- `yield return` when the elements are computed, read from somewhere, or potentially infinite, and the caller may stop early.
+- `IAsyncEnumerable<T>` when producing each element needs I/O.
+
+#### When NOT to use it
+
+- **Never hand-write an iterator class** like `PageIterator` in C#: `yield return` does it correctly (including `Dispose`).
+- **Lazy sequences over things that change or close:** an `IEnumerable<T>` over a `DbContext` returned from a method that disposes the context fails when enumerated later. Return a materialised list.
+- **When the caller needs the count or random access:** return `IReadOnlyList<T>`, not a lazy sequence they will enumerate several times.
+
+#### Costs
+
+- Laziness surprises: delayed exceptions, multiple enumeration, sequences that are read after their source is gone.
+- A small allocation per enumeration (the generated enumerator object).
+
+#### Relevance today
+
+⭐⭐⭐ **Essential.** `foreach`, LINQ, `yield return` and `await foreach` are the Iterator pattern, used in every line of collection code. You must understand how they work (laziness, the generated state machine); you should never implement the pattern by hand.
+
+#### Relatives
+
+- **Composite** ([5.3](#53-composite)): iterators walk trees; a recursive `yield return` flattens one.
+- **Visitor** ([6.11](#611-visitor)) also traverses a structure, but runs an *operation* per element type; an iterator only hands out the elements.
+- **Factory Method** ([4.2](#42-factory-method)): `GetEnumerator()` is a factory method for iterators.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- iterator
+```
+
+1. Put the `pageSize` check inside the `yield` method, call `Pages(0)` without enumerating, and see that nothing throws. Then call `.ToList()`.
+2. Enumerate `StreamAsync` with `.Take(5)` (LINQ for `IAsyncEnumerable<T>` is built into .NET 10) and check `api.Calls`.
+3. Compare `history.Pages(3)` with `orders.Chunk(3)` on the same data.
+
+#### Interview questions
+
+<details>
+<summary>What does the compiler generate for a method with <code>yield return</code>?</summary>
+
+A hidden class implementing `IEnumerable<T>` and `IEnumerator<T>`, with a state field and fields for the local variables. Each `MoveNext()` resumes the method from the last `yield return` and runs to the next one: a state machine.
+</details>
+
+<details>
+<summary>Why are argument checks in iterator methods delayed, and how do you fix it?</summary>
+
+Because none of the method's body runs until the first `MoveNext()`. Split it: a public non-iterator method that checks the arguments and returns a call to a private iterator method.
+</details>
+
+<details>
+<summary>What is the danger of returning a lazy <code>IEnumerable&lt;T&gt;</code> from a repository?</summary>
+
+It may be enumerated after the context or connection behind it is disposed, or enumerated several times, running the query again each time. Return a materialised list unless laziness is the point.
+</details>
 
 ### 6.5 Mediator
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐ Useful |
+| Family | Behavioral |
+| Intent | Define an object that encapsulates how a set of objects interact, so they do not refer to each other directly. |
+| Also known as | — |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- mediator` |
+| Code | [`src/Patterns.Behavioral/Mediator/`](../src/Patterns.Behavioral/Mediator/) |
+
+#### The problem
+
+The shop's web API has endpoints such as "place an order" and "get an order's total". Each endpoint needs several collaborators: the order store, a price check, an audit log, and more every month. If each endpoint receives and calls all of them, the endpoint classes grow huge constructors and know everything.
+
+The examples use two **requests**: `PlaceOrder(Order)` returns the new order's id, and `GetOrderTotal(Guid OrderId)` returns its total (`25.00` for two books), over an in-memory `OrderStore`.
+
+*Analogy:* an airport control tower. Planes do not talk to each other to decide who lands; each talks only to the tower, which coordinates them. Add a plane and nobody else changes.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/Mediator/0-Problem/):
+
+```csharp
+// PAIN: the endpoint knows every collaborator, and its constructor grows with every feature.
+public sealed class OrdersEndpoint(OrderStore store, PriceCheck priceCheck, AuditLog audit)
+{
+    public Guid Place(Order order)
+    {
+        priceCheck.Verify(order);
+        store.Save(order);
+        audit.Record($"placed {order.Id}");
+        return order.Id;
+    }
+
+    public decimal TotalOf(Guid orderId) => store.Get(orderId).Total;
+}
+```
+
+#### Structure
+
+There are **two forms** of Mediator.
+
+**The GoF form: colleagues talk through a mediator.** The book's example is a dialog box: when the user picks a value in a list, a text box and a button must update. Instead of every widget knowing the others, each tells the mediator "I changed", and the mediator decides what the others do. In the shop, a checkout form where choosing a shipping method updates the total and enabling the coupon field changes the button:
+
+```csharp
+public sealed class CheckoutFormMediator
+{
+    public required ShippingSelector Shipping { get; init; }
+    public required CouponBox Coupon { get; init; }
+    public required PayButton Pay { get; init; }
+
+    // Colleagues call this; only the mediator knows how they affect each other.
+    public void Changed(object colleague)
+    {
+        if (colleague == Shipping || colleague == Coupon)
+            Pay.ShowTotal(Shipping.Cost + Coupon.Discount);
+    }
+}
+```
+
+**The request/handler form** (what .NET developers usually mean today): callers send a **request** object to a **dispatcher**, which finds the one **handler** for that request type. The caller knows only the dispatcher; handlers know only what they need.
+
+```mermaid
+classDiagram
+    class Dispatcher {
+        <<Mediator>>
+        +Send~TResponse~(IRequest~TResponse~ request) TResponse
+    }
+    class IRequest~TResponse~ {
+        <<Request>>
+    }
+    class IRequestHandler~TRequest, TResponse~ {
+        <<Handler>>
+        +Handle(TRequest request) TResponse
+    }
+    class PlaceOrderHandler {
+        <<ConcreteHandler>>
+    }
+    class OrdersEndpoint {
+        <<Colleague>>
+    }
+    OrdersEndpoint --> Dispatcher
+    Dispatcher ..> IRequestHandler~TRequest, TResponse~ : finds and calls
+    IRequestHandler~TRequest, TResponse~ <|.. PlaceOrderHandler
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Mediator | `Dispatcher` | Finds the handler for a request type and calls it. |
+| Request | `PlaceOrder`, `GetOrderTotal` (records implementing `IRequest<TResponse>`) | The message, with the type of its answer. |
+| Handler | `PlaceOrderHandler`, `GetOrderTotalHandler` | The code for one request, with only the dependencies it needs. |
+| Colleague | the endpoints | Send requests; know nothing about handlers. |
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Endpoint
+    participant Dispatcher
+    participant Handler as GetOrderTotalHandler
+    participant Store as OrderStore
+    Endpoint->>Dispatcher: Send(new GetOrderTotal(id))
+    Note right of Dispatcher: look up the handler by request type
+    Dispatcher->>Handler: Handle(request)
+    Handler->>Store: Get(id)
+    Store-->>Handler: order
+    Handler-->>Dispatcher: 25.00
+    Dispatcher-->>Endpoint: 25.00
+```
+
+#### By hand
+
+```csharp
+// Role: Request — a message that declares the type of its answer.
+// Guide: §6.5
+public interface IRequest<TResponse>;
+
+public interface IRequestHandler<TRequest, TResponse> where TRequest : IRequest<TResponse>
+{
+    TResponse Handle(TRequest request);
+}
+
+public sealed record GetOrderTotal(Guid OrderId) : IRequest<decimal>;
+
+// Role: Mediator — routes each request to the one handler registered for its type.
+public sealed class Dispatcher
+{
+    // Request type → a function that calls its handler. Storing a function hides the generic types,
+    // so Send only needs to know TResponse.
+    private readonly Dictionary<Type, Func<object, object?>> _handlers = [];
+
+    public void Register<TRequest, TResponse>(IRequestHandler<TRequest, TResponse> handler)
+        where TRequest : IRequest<TResponse> =>
+        _handlers[typeof(TRequest)] = request => handler.Handle((TRequest)request);
+
+    public TResponse Send<TResponse>(IRequest<TResponse> request)
+    {
+        if (!_handlers.TryGetValue(request.GetType(), out var handle))
+            throw new InvalidOperationException($"No handler registered for {request.GetType().Name}.");
+        return (TResponse)handle(request)!;
+    }
+}
+
+var total = dispatcher.Send(new GetOrderTotal(orderId)); // TResponse inferred: decimal
+```
+
+The endpoint now depends on one thing, the dispatcher. Each handler is small, focused and testable on its own, and a new feature is a new request plus its handler.
+
+#### In .NET
+
+The BCL has no mediator; the DotNet level builds one over the DI container in about 40 lines ([`2-DotNet/`](../src/Patterns.Behavioral/Mediator/2-DotNet/)). Handlers are ordinary registered services, so they receive their own dependencies by constructor injection:
+
+```csharp
+services.AddSingleton<OrderStore>();
+services.AddTransient<IRequestHandler<PlaceOrder, Guid>, PlaceOrderHandler>();
+services.AddTransient<IRequestHandler<GetOrderTotal, decimal>, GetOrderTotalHandler>();
+services.AddSingleton<Dispatcher>();
+
+// Guide: §6.5
+public sealed class Dispatcher(IServiceProvider provider)
+{
+    public TResponse Send<TResponse>(IRequest<TResponse> request)
+    {
+        // Build the closed generic type IRequestHandler<GetOrderTotal, decimal> at run time.
+        var handlerType = typeof(IRequestHandler<,>).MakeGenericType(request.GetType(), typeof(TResponse));
+        var handler = provider.GetService(handlerType)
+            ?? throw new InvalidOperationException($"No handler registered for {request.GetType().Name}.");
+
+        // Reflection; DoNotWrapExceptions keeps the handler's own exception type for the caller.
+        return (TResponse)handlerType.GetMethod("Handle")!
+            .Invoke(handler, BindingFlags.DoNotWrapExceptions, binder: null, [request], culture: null)!;
+    }
+}
+```
+
+That is the core of what MediatR does (MediatR caches the handler lookups and adds async, notifications and pipeline behaviours on top).
+
+#### In the ecosystem
+
+**MediatR** is the best-known implementation of the request/handler mediator in .NET, and its **pipeline behaviours** (logging, validation, transactions around every handler) made it popular. It moved to a **commercial licence in 2025** (with a free tier for some users; check the current terms). Alternatives: a hand-written dispatcher like the one above; **Mediator** by Martin Othamar (MIT), which uses a source generator instead of reflection; or no mediator at all (see below).
+
+#### When to use it
+
+- **GoF form:** several objects (UI widgets, game entities) influence each other in many-to-many ways.
+- **Request/handler form:** many endpoints or message consumers, each with its own dependencies, and you want one handler per use case plus a single place to add cross-cutting behaviour (logging, validation, transactions) around all of them.
+
+#### When NOT to use it
+
+- **A small API:** an endpoint that calls a service directly is clearer, and "go to definition" works. A mediator turns a direct call into a lookup by type.
+- **Just to make constructors smaller:** that hides dependencies instead of reducing them. Split the class instead.
+- **Handlers that call other handlers through the mediator:** the flow becomes invisible. Call the shared code directly.
+- In minimal APIs, an endpoint can receive exactly the service it needs as a parameter; that is often all you need.
+
+#### Costs
+
+- Indirection: you cannot "go to definition" from `Send(new GetOrderTotal(…))` to its handler.
+- A missing handler fails at run time, not at compile time.
+- The mediator can become a god object if it starts containing logic.
+
+#### Relevance today
+
+⭐⭐ **Useful.** The request/handler mediator is very common in .NET codebases (often through MediatR, often in "vertical slice" code, where each feature is one request, its handler and its tests, or in CQRS, Command Query Responsibility Segregation, which uses separate models for writing and reading); the GoF form appears in UI code. Both are easy to overuse.
+
+#### Relatives
+
+- **Observer** ([6.7](#67-observer)): a mediator *coordinates* (it decides what happens); an observer subject only *announces* (subscribers decide). Comparison in [8.4](#84-observer-and-mediator).
+- **Facade** ([5.5](#55-facade)): subsystems do not know their facade; colleagues do know their mediator.
+- **Command** ([6.2](#62-command)): the requests sent to a dispatcher are commands. **Chain of Responsibility** ([6.1](#61-chain-of-responsibility)): MediatR's pipeline behaviours are a chain around each handler.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- mediator
+```
+
+1. Send a request with no registered handler and read the message.
+2. Add a `CancelOrder` request and handler. How many existing files changed?
+3. Add a "pipeline behaviour" to the DotNet dispatcher: log `"handling GetOrderTotal"` before every handler, in one place.
+
+#### Interview questions
+
+<details>
+<summary>What problem does Mediator solve?</summary>
+
+Many objects that would otherwise reference each other (many-to-many) talk through one mediator instead, so each depends only on the mediator and changes in how they interact live in one place.
+</details>
+
+<details>
+<summary>What is the downside of the request/handler mediator?</summary>
+
+It replaces direct calls with a lookup by type: navigation and compile-time checks are lost, a missing handler fails at run time, and simple flows become harder to follow.
+</details>
+
+<details>
+<summary>Why do some teams drop MediatR?</summary>
+
+Its licence became commercial in 2025, and the core (dispatching a request to a handler from the container) is a few dozen lines; many teams also prefer direct calls for small APIs.
+</details>
 
 ### 6.6 Memento
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐ Niche |
+| Family | Behavioral |
+| Intent | Without breaking encapsulation, capture an object's internal state so it can be restored later. |
+| Also known as | Token, Snapshot |
+| Levels | Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- memento` |
+| Code | [`src/Patterns.Behavioral/Memento/`](../src/Patterns.Behavioral/Memento/) |
+
+#### The problem
+
+Another way to undo in the cart (compare with Command in [6.2](#62-command)): before each change, **save a snapshot** of the cart; to undo, **restore** the last snapshot. Simple and always correct, whatever the change was. The difficulty: something outside the cart (the history) must keep those snapshots, yet the cart's internals should stay private.
+
+*Analogy:* a save point in a video game. The game stores your progress; you can go back to it. You cannot open the save file and edit your health points: only the game can read it.
+
+#### Without the pattern
+
+```csharp
+// Saving state by reading the cart's internals from outside:
+var saved = new Dictionary<Guid, int>(cart.Items); // the history now depends on how Cart stores items
+// …and restoring needs a public setter that anyone can call:
+cart.ReplaceItems(saved); // breaks encapsulation: any code can overwrite the cart
+```
+
+What hurts: either the cart exposes its internals to whoever keeps the history, or it offers a public "overwrite everything" method that anyone can misuse.
+
+#### Structure
+
+```mermaid
+classDiagram
+    class Cart {
+        <<Originator>>
+        +Add(Product product, int quantity)
+        +Remove(Guid productId)
+        +CreateSnapshot() CartSnapshot
+        +Restore(CartSnapshot snapshot)
+    }
+    class CartSnapshot {
+        <<Memento>>
+        ~ImmutableDictionary Items
+    }
+    class CartCaretaker {
+        <<Caretaker>>
+        -Stack~CartSnapshot~ _history
+        +Save()
+        +Undo() bool
+    }
+    Cart ..> CartSnapshot : creates and reads
+    CartCaretaker o-- CartSnapshot : keeps, never reads
+    CartCaretaker --> Cart
+```
+
+`~` marks an `internal` member.
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Originator | `Cart` | Creates snapshots of its own state and restores from them. |
+| Memento | `CartSnapshot` | Holds the saved state; offers **nothing public**. |
+| Caretaker | `CartCaretaker` | Keeps snapshots in a stack and hands them back for undo; cannot look inside. |
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Caretaker as CartCaretaker
+    participant Cart
+    Client->>Caretaker: Save()
+    Caretaker->>Cart: CreateSnapshot()
+    Cart-->>Caretaker: snapshot (opaque)
+    Client->>Cart: Add(mug, 1)
+    Client->>Caretaker: Undo()
+    Caretaker->>Cart: Restore(snapshot)
+    Note right of Cart: items are back to what they were
+    Caretaker-->>Client: true
+```
+
+#### By hand
+
+```csharp
+// Role: Memento — an opaque snapshot of a cart. Nothing outside this assembly can read it.
+// Guide: §6.6
+public sealed class CartSnapshot
+{
+    internal CartSnapshot(ImmutableDictionary<Guid, int> items) => Items = items;
+    internal ImmutableDictionary<Guid, int> Items { get; }
+}
+
+// Role: Originator — the only one who knows how to save and restore itself.
+public sealed class Cart
+{
+    private ImmutableDictionary<Guid, int> _items = ImmutableDictionary<Guid, int>.Empty;
+
+    public IReadOnlyDictionary<Guid, int> Items => _items;
+    public void Add(Product product, int quantity) =>
+        _items = _items.SetItem(product.Id, _items.GetValueOrDefault(product.Id) + quantity);
+    public void Remove(Guid productId) => _items = _items.Remove(productId);
+
+    public CartSnapshot CreateSnapshot() => new(_items); // immutable: later edits cannot change it
+    public void Restore(CartSnapshot snapshot) => _items = snapshot.Items;
+}
+
+// Role: Caretaker — keeps the snapshots, in order, without knowing what is inside.
+public sealed class CartCaretaker(Cart cart)
+{
+    private readonly Stack<CartSnapshot> _history = new();
+
+    public void Save() => _history.Push(cart.CreateSnapshot());
+
+    public bool Undo()
+    {
+        if (!_history.TryPop(out var snapshot)) return false;
+        cart.Restore(snapshot);
+        return true;
+    }
+}
+```
+
+**Encapsulation of the snapshot.** GoF asks for two views of the memento: a *wide* one for the originator (it can read the state) and a *narrow* one for everybody else (they can only hold it). C++ did this with `friend` classes. In C#:
+
+- `internal` members, as here: only code in the same assembly can read the snapshot. Good enough when the caretaker lives in another project; within one assembly it is a convention.
+- A nested class inside `Cart` with private members gives the strictest version: only `Cart` can read it.
+
+**Why records make it trivial.** The snapshot must not change after it is taken. If the cart kept a mutable `Dictionary` and the snapshot shared it, the next `Add` would change the "saved" state too (the shallow-copy trap of [4.5](#45-prototype)). Immutable data removes the problem: an `ImmutableDictionary` can be shared safely, so taking a snapshot costs nothing. Note that `with` alone is not enough: it is a shallow copy, so a record holding a mutable `Dictionary` would still share it. What matters is that the *contents* are immutable.
+
+#### In .NET
+
+When the state is an **immutable record**, the state is its own memento ([`2-DotNet/`](../src/Patterns.Behavioral/Memento/2-DotNet/)): every change returns a new state, and the old one is untouched, forever.
+
+```csharp
+// Guide: §6.6
+public sealed record CartState(ImmutableDictionary<Guid, int> Items)
+{
+    public static CartState Empty { get; } = new(ImmutableDictionary<Guid, int>.Empty);
+
+    public CartState Add(Product product, int quantity) =>
+        this with { Items = Items.SetItem(product.Id, Items.GetValueOrDefault(product.Id) + quantity) };
+
+    public CartState Remove(Guid productId) => this with { Items = Items.Remove(productId) };
+}
+
+var history = new Stack<CartState>();
+var cart = CartState.Empty;
+history.Push(cart); cart = cart.Add(SampleData.Book, 2);
+history.Push(cart); cart = cart.Add(SampleData.Mug, 1);
+cart = history.Pop(); // undo: the state with just the books, exactly as it was
+```
+
+No originator, no caretaker class, no encapsulation problem: there is nothing to protect because nothing can change. This is how many UI state libraries (Redux and its imitators: the whole UI state is one immutable value, replaced on every change) and many functional designs implement undo and "time travel" debugging.
+
+#### When to use it
+
+- You need undo, rollback or "cancel editing" and the state is **small or cheap to share** (immutable).
+- Reversing each operation (Command) would be complex or error-prone, and a snapshot is simple.
+- A transaction-like "try this, and go back if it fails".
+
+#### When NOT to use it
+
+- **The state is large and mutable:** copying it on every change costs memory and time. Use Command (store only the change) or immutable data structures.
+- **The state includes external resources** (open files, database rows, sent emails): a snapshot cannot restore them.
+- **The type is already an immutable record:** just keep the old values in a stack; do not add a `Snapshot` class.
+
+#### Costs
+
+- Memory per snapshot; long histories need a limit.
+- Keeping the snapshot opaque in C# takes care (`internal` or nested types).
+
+#### Relevance today
+
+⭐ **Niche.** The class-based pattern is rare in application code; immutable records made the idea everyday without a pattern name. Knowing it explains why immutability makes undo, caching and concurrency easier.
+
+#### Relatives
+
+- **Command** ([6.2](#62-command)) is the other way to undo; they combine well (each command keeps a memento of what it changed). See [9.1](#91-combinations-you-will-meet-in-real-code).
+- **Prototype** ([4.5](#45-prototype)) also copies state, to create a new object rather than to restore an old one.
+- **State** ([6.8](#68-state)): a memento can capture which state an object was in.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- memento
+```
+
+1. Change `Cart` to use a mutable `Dictionary` that the snapshot shares, and run `Snapshot_IsNotChangedByLaterEdits`.
+2. Limit `CartCaretaker` to the last 10 snapshots.
+3. Rewrite the Command demo's undo with `CartState` and a stack. Which is shorter?
+
+#### Interview questions
+
+<details>
+<summary>How does Memento keep encapsulation?</summary>
+
+Only the originator can read the snapshot's contents; the caretaker stores and returns it without seeing inside. In C# that is done with `internal` or nested types.
+</details>
+
+<details>
+<summary>Why do immutable records make Memento almost free?</summary>
+
+An immutable state cannot change after it is created, so the old state can be kept as is: there is nothing to copy and nothing to protect.
+</details>
 
 ### 6.7 Observer
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐⭐ Essential |
+| Family | Behavioral |
+| Intent | Define a one-to-many dependency so that when one object changes state, all its dependents are notified automatically. |
+| Also known as | Publish-Subscribe, Dependents, Listener |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- observer` |
+| Code | [`src/Patterns.Behavioral/Observer/`](../src/Patterns.Behavioral/Observer/) |
+
+#### The problem
+
+When an order is placed, three things must happen: a confirmation **email**, a **stock** reservation and an **analytics** event. Next month there will be a fourth (loyalty points), then a fifth. The code that places orders should not have to change each time someone new wants to react.
+
+In the examples each reaction writes one line to a shared log, so the tests can check who ran and in which order. For two books:
+
+```
+email: order 1a2b3c4d confirmed
+stock: reserve 2 units
+analytics: order total 25.00
+```
+
+*Analogy:* a newspaper subscription. The publisher does not know who reads the paper or why; it prints and delivers to whoever subscribed. Subscribing and cancelling do not change the newspaper.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/Observer/0-Problem/):
+
+```csharp
+public sealed class OrderService(EmailSender email, StockUpdater stock, Analytics analytics)
+{
+    public void Place(Order order)
+    {
+        // PAIN: OrderService depends on every class that reacts to an order. A new reaction means
+        // editing this class, its constructor and its tests.
+        email.SendConfirmation(order);
+        stock.Reserve(order);
+        analytics.Track(order);
+    }
+}
+```
+
+This is the "high coupling" picture of section [3.5](#35-the-principles-under-the-patterns).
+
+#### Structure
+
+```mermaid
+classDiagram
+    class OrderPublisher {
+        <<Subject>>
+        -List~IOrderObserver~ _observers
+        +Attach(IOrderObserver observer)
+        +Detach(IOrderObserver observer)
+        +Publish(Order order)
+    }
+    class IOrderObserver {
+        <<Observer>>
+        +OnOrderPlaced(Order order)
+    }
+    class EmailObserver {
+        <<ConcreteObserver>>
+    }
+    class StockObserver {
+        <<ConcreteObserver>>
+    }
+    class AnalyticsObserver {
+        <<ConcreteObserver>>
+    }
+    OrderPublisher o-- IOrderObserver : notifies
+    IOrderObserver <|.. EmailObserver
+    IOrderObserver <|.. StockObserver
+    IOrderObserver <|.. AnalyticsObserver
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Subject | `OrderPublisher` | Keeps the list of observers and notifies them all. Knows only the interface. |
+| Observer | `IOrderObserver` | What an observer must offer: `OnOrderPlaced(order)`. |
+| ConcreteObserver | `EmailObserver`, `StockObserver`, `AnalyticsObserver` | One reaction each. |
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Service as Order placing code
+    participant Subject as OrderPublisher
+    participant Email as EmailObserver
+    participant Stock as StockObserver
+    participant Analytics as AnalyticsObserver
+    Service->>Subject: Publish(order)
+    Subject->>Email: OnOrderPlaced(order)
+    Subject->>Stock: OnOrderPlaced(order)
+    Subject->>Analytics: OnOrderPlaced(order)
+    Note over Subject: in subscription order
+```
+
+#### By hand
+
+```csharp
+// Role: Observer — anything that wants to know when an order is placed.
+// Guide: §6.7
+public interface IOrderObserver
+{
+    void OnOrderPlaced(Order order);
+}
+
+// Role: Subject — announces placed orders to whoever subscribed.
+public sealed class OrderPublisher
+{
+    private readonly List<IOrderObserver> _observers = [];
+
+    public void Attach(IOrderObserver observer) => _observers.Add(observer);
+    public void Detach(IOrderObserver observer) => _observers.Remove(observer);
+
+    public void Publish(Order order)
+    {
+        // One failing observer must not silence the others: notify everybody, then report.
+        var failures = new List<Exception>();
+        foreach (var observer in _observers.ToList()) // a copy: an observer may detach while notified
+        {
+            try { observer.OnOrderPlaced(order); }
+            catch (Exception ex) { failures.Add(ex); }
+        }
+        if (failures.Count > 0) throw new AggregateException(failures);
+    }
+}
+```
+
+`OrderPublisher` knows only `IOrderObserver`. Loyalty points are a new observer and one `Attach` where the application is wired; no existing class changes.
+
+**Push vs pull.** There are two ways to tell observers what changed:
+
+| | Push | Pull |
+|---|---|---|
+| The notification carries | the data (`OnOrderPlaced(order)`) | only "something changed" |
+| The observer then | uses the data it received | asks the subject for what it needs |
+| Good when | observers need the same data | observers need different parts, or the data is large |
+| In .NET | `event EventHandler<OrderPlacedEventArgs>`, `IObservable<T>` | `IChangeToken` (configuration reload: "it changed, read it again") |
+
+This repository uses push.
+
+**A failing observer.** If the stock observer throws, should the email still go out? In the Classic subject, yes: `Publish` notifies everyone, collects the failures and throws one `AggregateException` at the end (test `Classic_FailingObserver_DoesNotStopTheOthers`). The C# `event` below behaves differently, and that difference is worth knowing.
+
+#### In .NET
+
+C# has the pattern built in as **events** ([`2-DotNet/`](../src/Patterns.Behavioral/Observer/2-DotNet/)):
+
+```csharp
+// Guide: §6.7
+public sealed class OrderPlacedEventArgs(Order order) : EventArgs
+{
+    public Order Order { get; } = order;
+}
+
+public sealed class OrderService
+{
+    public event EventHandler<OrderPlacedEventArgs>? OrderPlaced; // the subject's subscriber list
+
+    public void Place(Order order) => OrderPlaced?.Invoke(this, new OrderPlacedEventArgs(order));
+}
+
+EventHandler<OrderPlacedEventArgs> handler = (_, e) => log.Add($"stock: reserve {e.Order.Units} units");
+service.OrderPlaced += handler; // Attach
+service.OrderPlaced -= handler; // Detach: needs the same delegate instance, so keep a reference to the lambda
+```
+
+An `event` is a **multicast delegate**: one delegate that holds a list of methods and calls them in order. The `event` keyword restricts outsiders to `+=` and `-=`; only the declaring class can raise it. Two differences from the hand-written subject:
+
+- **A failing subscriber stops the rest.** `Invoke` calls the handlers one after another; if the second throws, the exception goes straight to `Place`, and the third handler **never runs**. The test `Event_StopsAtFirstFailingSubscriber` documents it. If you need "notify everyone anyway", loop over `OrderPlaced.GetInvocationList()` with a `try`/`catch`, as the Classic level does.
+- **Memory leaks.** The subject's delegate holds a reference to every subscriber (to the object whose method was subscribed, or to what a lambda captures). A long-lived subject (a singleton service) keeps short-lived subscribers (a page, a view model) **alive forever** if they never unsubscribe: the garbage collector cannot free them. Rule: whoever subscribes must unsubscribe when it is done (`-=`, or `Dispose` of the subscription), or the subject must live no longer than its subscribers.
+
+**`IObservable<T>` / `IObserver<T>`** are the BCL's interfaces for a *stream* of notifications: `OnNext(value)` for each item, `OnError(exception)` and `OnCompleted()` at the end. `Subscribe` returns an `IDisposable`, which makes unsubscribing explicit and leak-proof with `using`:
+
+```csharp
+public sealed class OrderStream : IObservable<Order>
+{
+    private readonly List<IObserver<Order>> _observers = [];
+
+    public IDisposable Subscribe(IObserver<Order> observer)
+    {
+        _observers.Add(observer);
+        return new Unsubscriber(() => _observers.Remove(observer)); // Dispose = unsubscribe
+    }
+
+    public void Publish(Order order)
+    {
+        foreach (var observer in _observers.ToList()) observer.OnNext(order);
+    }
+
+    private sealed class Unsubscriber(Action unsubscribe) : IDisposable
+    {
+        public void Dispose() => unsubscribe();
+    }
+}
+```
+
+**`IChangeToken`** is the pull-style observer used by configuration and file providers: `ChangeToken.OnChange(() => configuration.GetReloadToken(), () => …)` runs your callback when `appsettings.json` changes, and you read the new values yourself.
+
+#### In the ecosystem
+
+**System.Reactive** (Rx.NET, MIT, a .NET Foundation project) builds a whole query language on `IObservable<T>`: filter, combine, throttle and buffer streams of events with LINQ-like operators (`Where`, `Throttle`, `Buffer`). It shines for UI events and real-time data; for "notify three services that an order was placed" it is far more than you need.
+
+#### When to use it
+
+- One object's change must trigger **several independent reactions**, and new reactions keep appearing.
+- The object that changes should not know who reacts (a domain object raising "order placed"; a UI control raising "clicked").
+- A stream of values over time (sensor readings, price ticks): `IObservable<T>`.
+
+#### When NOT to use it
+
+- **There is exactly one reaction that always happens:** call it directly; an event hides a simple call.
+- **The reactions must happen in a guaranteed order, or all succeed together:** in-process events are not transactions. If stock reservation must not happen without the email, coordinate them explicitly (a facade, [5.5](#55-facade)).
+- **The reaction is slow or can fail and must be retried** (send an email via an external service): an in-memory event lost on a crash is not enough; use a message queue (out of scope, see [9.4](#94-out-of-scope)).
+- **Subscribers with short lives on a long-lived subject**, if you cannot guarantee unsubscription.
+
+#### Costs
+
+- The flow is implicit: reading `Place` you cannot see what happens next; you must find the subscribers.
+- Ordering, error handling and threading of notifications are decisions to make (and document).
+- Memory leaks from forgotten subscriptions.
+
+#### Relevance today
+
+⭐⭐⭐ **Essential.** C# events, UI frameworks, `IObservable<T>`, `IChangeToken`, domain events and message buses are all Observer. You use it, and its pitfalls (leaks, exceptions), constantly.
+
+#### Relatives
+
+- **Mediator** ([6.5](#65-mediator)): a mediator decides what each colleague does; an observer subject only announces. They combine: a mediator can be an observer of its colleagues. Comparison in [8.4](#84-observer-and-mediator).
+- **Chain of Responsibility** ([6.1](#61-chain-of-responsibility)) passes a request until one handles it; Observer sends it to everybody.
+- **Command** ([6.2](#62-command)): what gets published is often a command or event object.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- observer
+```
+
+1. Add a `LoyaltyObserver` (`"loyalty: 25 points"`) without touching `OrderPublisher`. Then add the same reaction to the Problem version.
+2. Make the stock observer throw and compare the log in the Classic and `event` versions.
+3. Subscribe a lambda that captures a large `byte[]` to a static event, drop every other reference, call `GC.Collect()`, and check with `GC.GetTotalMemory` whether the memory is freed.
+
+#### Interview questions
+
+<details>
+<summary>What happens if a C# event handler throws?</summary>
+
+The exception propagates from the `Invoke` call and the remaining handlers are not called. To notify everyone regardless, iterate `GetInvocationList()` and catch per handler.
+</details>
+
+<details>
+<summary>How can events cause memory leaks?</summary>
+
+The event's delegate references every subscriber. If the publisher lives longer than a subscriber that never unsubscribes, the subscriber stays reachable and is never collected.
+</details>
+
+<details>
+<summary>What is the difference between push and pull observers?</summary>
+
+In push, the notification carries the data observers need. In pull, it only says something changed, and each observer reads what it needs from the subject. `IChangeToken` is pull; events with `EventArgs` are push.
+</details>
 
 ### 6.8 State
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐ Useful |
+| Family | Behavioral |
+| Intent | Allow an object to change its behaviour when its internal state changes; it appears to change its class. |
+| Also known as | Objects for States |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- state` |
+| Code | [`src/Patterns.Behavioral/State/`](../src/Patterns.Behavioral/State/) |
+
+#### The problem
+
+An order moves through its **life cycle**, described in section [3.8](#38-the-shop):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft
+    Draft --> Placed : Place
+    Placed --> Paid : Pay
+    Paid --> Shipped : Ship
+    Draft --> Cancelled : Cancel
+    Placed --> Cancelled : Cancel
+    Paid --> Cancelled : Cancel
+    Shipped --> [*]
+    Cancelled --> [*]
+```
+
+Four actions (`Place`, `Pay`, `Ship`, `Cancel`), five statuses. What an action does **depends on the status**: `Ship` on a paid order ships it; on a placed order it is an error. Every illegal move throws `InvalidOperationException` with the message `"Cannot <action> an order that is <Status>."`, for example `"Cannot ship an order that is Placed."`.
+
+*Analogy:* a traffic light. Pressing the pedestrian button does different things depending on whether the light is green, amber or red. The button is the same; the behaviour comes from the current state.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/State/0-Problem/):
+
+```csharp
+public sealed class OrderWorkflow
+{
+    public OrderStatus Status { get; private set; } = OrderStatus.Draft;
+
+    public void Pay()
+    {
+        // PAIN: the rules of each status are scattered across four methods. To know everything a
+        // Paid order can do, you read all of them.
+        if (Status != OrderStatus.Placed) throw Illegal("pay");
+        Status = OrderStatus.Paid;
+    }
+
+    public void Cancel()
+    {
+        if (Status is OrderStatus.Shipped or OrderStatus.Cancelled) throw Illegal("cancel");
+        Status = OrderStatus.Cancelled;
+    }
+    // Place() and Ship() repeat the same shape…
+
+    private InvalidOperationException Illegal(string action) =>
+        new($"Cannot {action} an order that is {Status}.");
+}
+```
+
+With 5 statuses and 4 actions this is still readable. It hurts when each status also has its own data and behaviour (a paid order has a payment id, a shipped one a tracking number, each with its own rules for refunds…), and every method grows a `switch` on `Status`.
+
+#### Structure
+
+```mermaid
+classDiagram
+    class OrderContext {
+        <<Context>>
+        -OrderState _state
+        +OrderStatus Status
+        +Place()
+        +Pay()
+        +Ship()
+        +Cancel()
+    }
+    class OrderState {
+        <<State>>
+        +OrderStatus Status*
+        +Place(OrderContext order)
+        +Pay(OrderContext order)
+        +Ship(OrderContext order)
+        +Cancel(OrderContext order)
+    }
+    class DraftState {
+        <<ConcreteState>>
+    }
+    class PlacedState {
+        <<ConcreteState>>
+    }
+    class PaidState {
+        <<ConcreteState>>
+    }
+    class ShippedState {
+        <<ConcreteState>>
+    }
+    class CancelledState {
+        <<ConcreteState>>
+    }
+    OrderContext --> OrderState : current
+    OrderState <|-- DraftState
+    OrderState <|-- PlacedState
+    OrderState <|-- PaidState
+    OrderState <|-- ShippedState
+    OrderState <|-- CancelledState
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Context | `OrderContext` | What clients use. Holds the current state object and delegates every action to it. |
+| State | `OrderState` | One method per action; by default every action is illegal (throws). |
+| ConcreteState | `DraftState`, `PlacedState`, `PaidState`, `ShippedState`, `CancelledState` | Override only the actions that are legal in that status, and move the context to the next state. |
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Order as OrderContext
+    participant Placed as PlacedState
+    participant Paid as PaidState
+    Client->>Order: Pay()
+    Order->>Placed: Pay(order)
+    Placed->>Order: TransitionTo(PaidState)
+    Client->>Order: Pay()
+    Order->>Paid: Pay(order)
+    Note right of Paid: not overridden: base throws
+    Paid-->>Client: "Cannot pay an order that is Paid."
+```
+
+#### By hand
+
+```csharp
+// Role: State — what an order can do in one status. By default, nothing is allowed.
+// Guide: §6.8
+public abstract class OrderState
+{
+    public abstract OrderStatus Status { get; }
+
+    public virtual void Place(OrderContext order) => throw Illegal("place");
+    public virtual void Pay(OrderContext order) => throw Illegal("pay");
+    public virtual void Ship(OrderContext order) => throw Illegal("ship");
+    public virtual void Cancel(OrderContext order) => throw Illegal("cancel");
+
+    private InvalidOperationException Illegal(string action) =>
+        new($"Cannot {action} an order that is {Status}.");
+}
+
+// Role: ConcreteState — a placed order can be paid or cancelled, nothing else.
+public sealed class PlacedState : OrderState
+{
+    public override OrderStatus Status => OrderStatus.Placed;
+    public override void Pay(OrderContext order) => order.TransitionTo(new PaidState());
+    public override void Cancel(OrderContext order) => order.TransitionTo(new CancelledState());
+}
+
+// Role: Context — the order clients use; its behaviour comes from the current state object.
+public sealed class OrderContext
+{
+    private OrderState _state = new DraftState();
+
+    public OrderStatus Status => _state.Status;
+    public void Place() => _state.Place(this);
+    public void Pay() => _state.Pay(this);
+    public void Ship() => _state.Ship(this);
+    public void Cancel() => _state.Cancel(this);
+
+    internal void TransitionTo(OrderState next) => _state = next;
+}
+```
+
+Everything a placed order can do is in `PlacedState`, in five lines. Adding a status (`Refunded`) is a new class plus the transitions that lead to it; the existing statuses do not change unless they gain a new move. States without data can be shared single instances (they are stateless), which is a small Flyweight ([5.6](#56-flyweight)).
+
+#### In .NET
+
+.NET has no State pattern built in. For a life cycle like this one, the light alternative is a **transition table** written as a single `switch` expression on the pair (status, action) ([`2-DotNet/`](../src/Patterns.Behavioral/State/2-DotNet/)):
+
+```csharp
+public enum OrderAction { Place, Pay, Ship, Cancel }
+
+// Guide: §6.8
+public static class OrderTransitions
+{
+    public static OrderStatus Next(OrderStatus from, OrderAction action) => (from, action) switch
+    {
+        (OrderStatus.Draft, OrderAction.Place) => OrderStatus.Placed,
+        (OrderStatus.Placed, OrderAction.Pay) => OrderStatus.Paid,
+        (OrderStatus.Paid, OrderAction.Ship) => OrderStatus.Shipped,
+        (OrderStatus.Draft or OrderStatus.Placed or OrderStatus.Paid, OrderAction.Cancel) => OrderStatus.Cancelled,
+        _ => throw new InvalidOperationException(
+            $"Cannot {action.ToString().ToLowerInvariant()} an order that is {from}."),
+    };
+}
+```
+
+The whole state diagram fits on one screen and reads like it. Combined with records (`order with { Status = OrderTransitions.Next(order.Status, OrderAction.Pay) }`), it is often all you need.
+
+**Switch or classes?**
+
+| Use a transition `switch` when… | Use State classes when… |
+|---|---|
+| States differ only in **which moves are allowed**. | States differ in **behaviour and data** (a paid order computes refunds, a shipped one tracks the parcel). |
+| The diagram fits in one table and changes rarely. | Each state has a lot of logic, and you want it together. |
+| You want to see the whole machine at a glance. | Several people change different states independently. |
+
+Many real workflows start as a `switch` and are refactored to classes when one state grows its own logic (section [3.6](#36-patternitis)).
+
+#### In the ecosystem
+
+**Stateless** (Apache-2.0) lets you declare a state machine fluently (`machine.Configure(Placed).Permit(Pay, Paid)`), with guards, entry/exit actions and diagram export. Useful for large workflows with many guards; overkill for five states.
+
+#### When to use it
+
+- An object's behaviour depends on its state, and **many methods** would otherwise `switch` on the same state field.
+- States have their own data and rules that belong together.
+- The life cycle must be enforced: illegal transitions must be impossible, not just discouraged.
+
+#### When NOT to use it
+
+- **Few states, rules that only say which moves are legal:** a transition `switch` (the .NET level) is shorter and shows the whole diagram at once.
+- **Two states:** a `bool` and an `if`.
+- **The states come from configuration** or change per customer: a table-driven machine (or a library) is better than one class per state.
+
+#### Costs
+
+- One class per state; the overall diagram is no longer visible in one place, only by reading every class.
+- The states and the context are tightly coupled (states call `TransitionTo`).
+
+#### Relevance today
+
+⭐⭐ **Useful.** Every order, payment, ticket or document has a life cycle. Most are well served by a `switch` expression; the class-based State pattern earns its place when states carry real behaviour.
+
+#### Relatives
+
+- **Strategy** ([6.9](#69-strategy)) has the same structure (a context delegating to an interchangeable object). A strategy is chosen **from outside** and usually stays; a state **changes itself** as the object moves through its life. Comparison in [8.2](#82-strategy-state-template-method).
+- **Flyweight** ([5.6](#56-flyweight)): stateless state objects can be shared.
+- **Memento** ([6.6](#66-memento)) can capture the state to restore it.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- state
+```
+
+1. Add a `Refund` action: only a `Paid` or `Shipped` order can be refunded, and it ends `Cancelled`. Do it in all three levels and compare.
+2. Try to ship a placed order and cancel a shipped one; read the messages.
+3. Run the `[Theory]` over all 20 (status, action) pairs and count how many are legal.
+
+#### Interview questions
+
+<details>
+<summary>What is the difference between State and Strategy?</summary>
+
+Same structure, different intent. A strategy is chosen by the client and represents *how* to do something; a state represents *where* the object is in its life and replaces itself as the object changes, so the transitions live inside the states.
+</details>
+
+<details>
+<summary>When is a <code>switch</code> expression better than the State pattern?</summary>
+
+When states only differ in which transitions are allowed: a `switch` on `(status, action)` is a readable transition table that shows the whole state machine at once.
+</details>
 
 ### 6.9 Strategy
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐⭐ Essential |
+| Family | Behavioral |
+| Intent | Define a family of algorithms, encapsulate each one, and make them interchangeable. |
+| Also known as | Policy |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- strategy` |
+| Code | [`src/Patterns.Behavioral/Strategy/`](../src/Patterns.Behavioral/Strategy/) |
+
+#### The problem
+
+The shop offers three shipping methods, each priced differently:
+
+| Method | Price |
+|---|---|
+| `standard` | 4.99, **free** when the order total is 50.00 or more |
+| `express` | 9.99 + 1.00 per unit |
+| `pickup` | 0.00 (collect it in the store) |
+
+For three books (37.50): standard 4.99, express 12.99, pickup 0.00. For four books (exactly 50.00), standard is free: the rule is `>=`, not `>`. More methods (a locker network, same-day delivery) are coming.
+
+*Analogy:* getting to the airport. Bus, taxi or train: the goal is the same, the way and the cost differ, and you pick one depending on the situation. The trip does not change because a new tram line opens.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/Strategy/0-Problem/) (also shown in section [2.3](#23-the-folder-of-a-pattern)):
+
+```csharp
+public sealed class ShippingCalculator
+{
+    public decimal CostFor(Order order, string method) => method switch
+    {
+        "standard" => order.Total >= 50.00m ? 0.00m : 4.99m,
+        "express" => 9.99m + 1.00m * order.Units,
+        "pickup" => 0.00m,
+        // PAIN: every new carrier means another case here, and this method's tests change with it.
+        _ => throw new ArgumentException($"Unknown shipping method '{method}'."),
+    };
+}
+```
+
+For three methods that never change, this `switch` is perfectly fine. It hurts when methods are added often, have their own dependencies (a carrier API) or their own tests, or are chosen by configuration.
+
+#### Structure
+
+```mermaid
+classDiagram
+    class ShippingCalculator {
+        <<Context>>
+        -IShippingStrategy _strategy
+        +CostFor(Order order) decimal
+    }
+    class IShippingStrategy {
+        <<Strategy>>
+        +CostFor(Order order) decimal
+    }
+    class StandardShipping {
+        <<ConcreteStrategy>>
+    }
+    class ExpressShipping {
+        <<ConcreteStrategy>>
+    }
+    class StorePickup {
+        <<ConcreteStrategy>>
+    }
+    ShippingCalculator --> IShippingStrategy
+    IShippingStrategy <|.. StandardShipping
+    IShippingStrategy <|.. ExpressShipping
+    IShippingStrategy <|.. StorePickup
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Strategy | `IShippingStrategy` | The common interface of the algorithms. |
+| ConcreteStrategy | `StandardShipping`, `ExpressShipping`, `StorePickup` | One pricing rule each. |
+| Context | `ShippingCalculator` | Holds a strategy and uses it; does not know which one. |
+
+#### How it runs
+
+The sequence diagram of section [3.4](#34-how-to-read-the-diagrams) is exactly this pattern: the calculator forwards `CostFor(order)` to the express strategy, which returns 12.99.
+
+#### By hand
+
+```csharp
+// Role: Strategy — one way of pricing shipping.
+// Guide: §6.9
+public interface IShippingStrategy
+{
+    decimal CostFor(Order order);
+}
+
+// Role: ConcreteStrategy — standard shipping, free from 50.00 (inclusive).
+public sealed class StandardShipping : IShippingStrategy
+{
+    public decimal CostFor(Order order) => order.Total >= 50.00m ? 0.00m : 4.99m;
+}
+
+// Role: ConcreteStrategy — express: a fixed fee plus one euro per unit.
+public sealed class ExpressShipping : IShippingStrategy
+{
+    public decimal CostFor(Order order) => 9.99m + 1.00m * order.Units;
+}
+
+// Role: Context — prices shipping with whatever strategy it was given.
+public sealed class ShippingCalculator(IShippingStrategy strategy)
+{
+    public decimal CostFor(Order order) => strategy.CostFor(order);
+}
+```
+
+Each rule is its own class with its own tests (`Standard_AtExactly50_IsFree`). A new method is a new class; neither the calculator nor the other strategies change (the Open/Closed principle, [3.5](#35-the-principles-under-the-patterns)).
+
+#### In .NET
+
+**Keyed services** let the container hold all the strategies and pick one by name at run time ([`2-DotNet/`](../src/Patterns.Behavioral/Strategy/2-DotNet/)):
+
+```csharp
+services.AddKeyedSingleton<IShippingStrategy, StandardShipping>("standard");
+services.AddKeyedSingleton<IShippingStrategy, ExpressShipping>("express");
+services.AddKeyedSingleton<IShippingStrategy, StorePickup>("pickup");
+
+// Guide: §6.9
+public sealed class ShippingCalculator(IServiceProvider services)
+{
+    public decimal CostFor(Order order, string method) =>
+        services.GetRequiredKeyedService<IShippingStrategy>(method).CostFor(order); // unknown key: InvalidOperationException
+}
+```
+
+Compare with the Problem level: the same `CostFor(order, method)` signature, but the `switch` is now the container's registrations, and a new method is a new class plus one line of registration.
+
+**A strategy is often just a function.** When the algorithm is one method with no dependencies, a `Func<Order, decimal>` *is* the strategy interface, and a lambda is a concrete strategy:
+
+```csharp
+public static class ShippingRules
+{
+    public static readonly Func<Order, decimal> Standard = order => order.Total >= 50.00m ? 0.00m : 4.99m;
+    public static readonly Func<Order, decimal> Express = order => 9.99m + 1.00m * order.Units;
+}
+
+decimal Price(Order order, Func<Order, decimal> shipping) => order.Total + shipping(order);
+```
+
+**Strategy vs `Func<>` vs keyed services:**
+
+| Choose | When |
+|---|---|
+| `Func<T, TResult>` | The algorithm is one small function, with no dependencies of its own, chosen in code. |
+| An interface + classes | The algorithm has several methods, its own dependencies (a carrier client), its own tests, or a name you want to see in the code. |
+| Keyed services | The strategy is chosen **at run time by a key** (a user's choice, a configuration value) and the strategies come from the container. |
+
+The BCL uses strategies everywhere: `IComparer<T>` decides how `List<T>.Sort` orders elements, `IEqualityComparer<T>` how a `Dictionary` compares keys (`StringComparer.OrdinalIgnoreCase` is a strategy), and every LINQ method that takes a lambda takes a strategy:
+
+```csharp
+orders.Sort(Comparer<Order>.Create((a, b) => b.Total.CompareTo(a.Total))); // most expensive first
+```
+
+#### When to use it
+
+- Several ways of doing the same thing, chosen at run time (by the user, by configuration, by data).
+- A `switch` on a "type" or "mode" string that keeps growing, especially if each branch is long or has its own dependencies.
+- You want to test each algorithm in isolation.
+
+#### When NOT to use it
+
+- **Two or three stable variants:** a `switch` expression is clearer, and everything is in one place.
+- **The variants never change at run time** and only one is used: there is nothing to swap.
+- **Only to pass a little behaviour:** use a `Func<>` parameter, not an interface and a class.
+
+#### Costs
+
+- More types; the reader must find which strategy is used where.
+- Clients (or the composition root) must know the strategies to choose one.
+
+#### Relevance today
+
+⭐⭐⭐ **Essential.** Every lambda passed to LINQ, every comparer and every service resolved by key is a strategy. It is the pattern behind "depend on an interface and inject the implementation".
+
+#### Relatives
+
+- **State** ([6.8](#68-state)): same structure; a state replaces itself, a strategy is chosen from outside. **Template Method** ([6.10](#610-template-method)) varies part of an algorithm by inheritance; Strategy varies all of it by composition. Comparison in [8.2](#82-strategy-state-template-method).
+- **Command** ([6.2](#62-command)): both wrap behaviour in an object; comparison in [8.5](#85-command-and-strategy).
+- **Factory Method** ([4.2](#42-factory-method)) and keyed services: a factory often chooses the strategy. See [9.1](#91-combinations-you-will-meet-in-real-code).
+- **Decorator** ([5.4](#54-decorator)) changes the outside of an object; Strategy its inside.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- strategy
+```
+
+1. Add a `locker` method (2.50 flat) at each level and count the files you touch.
+2. Change `>=` to `>` in `StandardShipping` and run the tests: which one catches it?
+3. Ask the .NET calculator for `"drone"` and read the exception.
+
+#### Interview questions
+
+<details>
+<summary>How do lambdas relate to Strategy?</summary>
+
+A delegate type like `Func<Order, decimal>` is a one-method strategy interface, and each lambda is a concrete strategy. When the algorithm needs no state or dependencies, a lambda replaces the classes.
+</details>
+
+<details>
+<summary>Give three examples of Strategy in the BCL.</summary>
+
+`IComparer<T>` for sorting, `IEqualityComparer<T>` (for example `StringComparer.OrdinalIgnoreCase`) for dictionaries and sets, and the predicate and selector lambdas of LINQ.
+</details>
+
+<details>
+<summary>When is a <code>switch</code> better than Strategy?</summary>
+
+When there are few variants, they rarely change, and they have no dependencies of their own: the switch keeps all the rules visible in one place.
+</details>
 
 ### 6.10 Template Method
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐⭐ Useful |
+| Family | Behavioral |
+| Intent | Define the skeleton of an algorithm in a method, deferring some steps to subclasses. |
+| Also known as | — |
+| Levels | Problem · Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- template-method` |
+| Code | [`src/Patterns.Behavioral/TemplateMethod/`](../src/Patterns.Behavioral/TemplateMethod/) |
+
+#### The problem
+
+The shop exports orders as **CSV** (comma-separated values, for spreadsheets) and as **JSON** (for other systems). Both exports follow the same rules: skip draft orders, sort by total (highest first, then by id), write a header, one row per order, a footer. Only the **format** of the header, rows and footer differs.
+
+The tests use three fixed orders: A (two books, 25.00, `Placed`), B (headphones, 59.90, `Paid`) and C (a mug, `Draft`). The CSV export is exactly:
+
+```
+id,customer,status,total
+00000000-0000-0000-0000-000000000002,Ana,Paid,59.90
+00000000-0000-0000-0000-000000000001,Ana,Placed,25.00
+```
+
+and the JSON export `[{"id":"…0002","total":59.90},{"id":"…0001","total":25.00}]` (full ids, no spaces). Order C is a draft, so it appears in neither.
+
+*Analogy:* a recipe card for "a sandwich": take bread, add the filling, close, cut. Every sandwich follows those steps; only "add the filling" changes between a ham sandwich and a cheese one.
+
+#### Without the pattern
+
+From [`0-Problem/`](../src/Patterns.Behavioral/TemplateMethod/0-Problem/):
+
+```csharp
+public sealed class CsvExporter
+{
+    public string Export(IEnumerable<Order> orders)
+    {
+        // PAIN: the filter and sort rules are copied in JsonExporter. Changing them (say, also skip
+        // cancelled orders) in one exporter and forgetting the other is a matter of time.
+        var selected = orders.Where(o => o.Status != OrderStatus.Draft)
+                             .OrderByDescending(o => o.Total).ThenBy(o => o.Id);
+        var csv = new StringBuilder("id,customer,status,total\n");
+        foreach (var order in selected)
+            csv.Append(CultureInfo.InvariantCulture, $"{order.Id},{order.Customer.Name},{order.Status},{order.Total:0.00}\n");
+        return csv.ToString();
+    }
+}
+```
+
+#### Structure
+
+```mermaid
+classDiagram
+    class OrderExporter {
+        <<AbstractClass>>
+        +Export(IEnumerable~Order~ orders) string
+        #Header()* string
+        #Row(Order order, bool isLast)* string
+        #Footer() string
+    }
+    class CsvOrderExporter {
+        <<ConcreteClass>>
+        #Header() string
+        #Row(Order order, bool isLast) string
+    }
+    class JsonOrderExporter {
+        <<ConcreteClass>>
+        #Header() string
+        #Row(Order order, bool isLast) string
+        #Footer() string
+    }
+    OrderExporter <|-- CsvOrderExporter
+    OrderExporter <|-- JsonOrderExporter
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| AbstractClass | `OrderExporter` | `Export` is the **template method**: the fixed steps. It calls abstract steps and hooks. |
+| ConcreteClass | `CsvOrderExporter`, `JsonOrderExporter` | Fill in the steps that vary: header, row, and optionally footer. |
+
+Three kinds of method appear:
+
+- the **template method** (`Export`): public and *not* virtual, so subclasses cannot change the skeleton;
+- **abstract steps** (`Header`, `Row`): every subclass must provide them;
+- **hooks** (`Footer`): virtual with a default (here, empty), so subclasses *may* override them. JSON needs a closing `]`; CSV does not.
+
+#### How it runs
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Base as OrderExporter.Export
+    participant Json as JsonOrderExporter
+    Client->>Base: Export(orders)
+    Note right of Base: skip drafts, sort by total desc, then id
+    Base->>Json: Header()
+    Json-->>Base: "["
+    Base->>Json: Row(B, isLast: false)
+    Base->>Json: Row(A, isLast: true)
+    Base->>Json: Footer()
+    Json-->>Base: "]"
+    Base-->>Client: the JSON text
+```
+
+The base class calls the subclass, not the other way round.
+
+#### By hand
+
+```csharp
+// Role: AbstractClass — the export algorithm, with the format left to subclasses.
+// Guide: §6.10
+public abstract class OrderExporter
+{
+    // The template method: not virtual, so every exporter follows the same rules.
+    public string Export(IEnumerable<Order> orders)
+    {
+        var selected = orders.Where(o => o.Status != OrderStatus.Draft)
+                             .OrderByDescending(o => o.Total).ThenBy(o => o.Id)
+                             .ToList();
+        var text = new StringBuilder(Header());
+        for (var i = 0; i < selected.Count; i++)
+            text.Append(Row(selected[i], isLast: i == selected.Count - 1));
+        return text.Append(Footer()).ToString();
+    }
+
+    protected abstract string Header();
+    protected abstract string Row(Order order, bool isLast);
+    protected virtual string Footer() => ""; // a hook: optional, empty by default
+}
+
+// Role: ConcreteClass — the CSV format.
+public sealed class CsvOrderExporter : OrderExporter
+{
+    protected override string Header() => "id,customer,status,total\n";
+    protected override string Row(Order order, bool isLast) => string.Create(CultureInfo.InvariantCulture,
+        $"{order.Id},{order.Customer.Name},{order.Status},{order.Total:0.00}\n");
+}
+
+// Role: ConcreteClass — the JSON format (written by hand to keep the example small).
+public sealed class JsonOrderExporter : OrderExporter
+{
+    protected override string Header() => "[";
+    protected override string Row(Order order, bool isLast) => string.Create(CultureInfo.InvariantCulture,
+        $"{{\"id\":\"{order.Id}\",\"total\":{order.Total:0.00}}}{(isLast ? "" : ",")}");
+    protected override string Footer() => "]";
+}
+```
+
+The selection rules live in one place; a new format is a subclass with two or three small methods.
+
+**The Hollywood principle: "don't call us, we'll call you".** In ordinary code, your code calls the library. With Template Method the roles reverse: the base class (often a framework) owns the flow and **calls your code** at the right moments. That inversion of control is what makes frameworks frameworks.
+
+**Why to prefer composition.** Template Method is the GoF pattern built on inheritance, and it inherits its limits (section [3.5](#35-the-principles-under-the-patterns)): a class has one base class, so you cannot combine "CSV format" with "only paid orders" and "gzip" without a subclass per combination; and subclasses depend on the base class's internals. If the varying steps were passed in as objects or functions (`new OrderExporter(new CsvFormat())`), you would have Strategy ([6.9](#69-strategy)) instead, with free combination. Template Method is still fine when the steps are few, belong together, and the base class is designed for it, as in the framework classes below.
+
+#### In .NET
+
+**`BackgroundService`** is a template method you use in every worker service ([`2-DotNet/`](../src/Patterns.Behavioral/TemplateMethod/2-DotNet/)). The framework's `StartAsync` and `StopAsync` own the skeleton (start the work on a background task, cancel it on shutdown, wait for it); you fill in one abstract step, `ExecuteAsync`:
+
+```csharp
+// Role: ConcreteClass — fills in the one step BackgroundService leaves open.
+// Guide: §6.10
+public sealed class NightlyExportService(IEnumerable<Order> orders, StringWriter output) : BackgroundService
+{
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        output.Write(new CsvOrderExporter().Export(orders)); // export once, then finish
+        return Task.CompletedTask;
+    }
+}
+```
+
+The host calls `StartAsync`, which calls your `ExecuteAsync`: the Hollywood principle in action. Since .NET 10, `StartAsync` runs the whole `ExecuteAsync` on a background task and returns at once, so a test must `await service.ExecuteTask` (or call `StopAsync`) before checking the result.
+
+**`Stream`** is another: methods like `CopyTo`, `ReadExactly` and the `Span`-based `Read` are written once in the `Stream` base class on top of the abstract `Read(byte[], int, int)` and `Write`, which each concrete stream (`FileStream`, `MemoryStream`, `NetworkStream`) implements. MVC's `Controller.OnActionExecuting` / `OnActionExecuted`, EF Core's `DbContext.OnConfiguring` / `OnModelCreating` and `JsonConverter<T>.Read` / `Write` are steps and hooks of the same kind.
+
+#### When to use it
+
+- Several classes share the **same algorithm** with a few varying steps, and the steps belong together.
+- You write a **framework or base class** that must control the order of steps (and guarantee the common ones run) while letting users customise some of them.
+
+#### When NOT to use it
+
+- **The varying parts are independent of each other** (format, filter, compression): pass them as objects or delegates (Strategy) so they combine freely.
+- **Only one implementation exists:** write the method directly.
+- **Deep hierarchies** (a template method calling a template method in the parent): the flow becomes very hard to follow. Prefer composition.
+
+#### Costs
+
+- Inheritance: one base class, coupling to its internals, and subclasses that break when the base changes (the "fragile base class" problem).
+- The flow jumps between base and subclass, which makes reading and debugging harder.
+
+#### Relevance today
+
+⭐⭐ **Useful.** You *use* framework template methods (`BackgroundService`, `Stream`, `DbContext`) all the time; you *write* new ones less often, because composition (Strategy, delegates) is usually the better choice in application code.
+
+#### Relatives
+
+- **Strategy** ([6.9](#69-strategy)) varies the whole algorithm by composition; Template Method varies steps by inheritance. Comparison in [8.2](#82-strategy-state-template-method).
+- **Factory Method** ([4.2](#42-factory-method)) is a template method whose varying step is "create an object".
+- **Chain of Responsibility** ([6.1](#61-chain-of-responsibility)): the `Check` method of `OrderRule` is itself a small template method.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- template-method
+```
+
+1. Also skip `Cancelled` orders: change one line in Classic, two in Problem.
+2. Write a `MarkdownOrderExporter` that produces a table, overriding the footer hook if needed.
+3. Rewrite the Classic level with composition: `OrderExporter(IOrderFormat format)`. What does each version make easy?
+
+#### Interview questions
+
+<details>
+<summary>What is a hook in Template Method?</summary>
+
+A virtual step with a default implementation (often empty) that subclasses may override but do not have to, unlike abstract steps, which they must provide.
+</details>
+
+<details>
+<summary>What is the Hollywood principle?</summary>
+
+"Don't call us, we'll call you": the base class or framework controls the flow and calls the user's code at defined points, instead of the user's code calling the library.
+</details>
+
+<details>
+<summary>Why is Template Method often replaced by Strategy?</summary>
+
+Template Method relies on inheritance: one base class, combinations need more subclasses, and subclasses depend on base internals. Passing the varying steps as objects or delegates lets them combine and be tested independently.
+</details>
 
 ### 6.11 Visitor
 
-*Coming in a later phase.*
+#### Card
+
+| | |
+|---|---|
+| Relevance | ⭐ Niche — pattern matching is the modern alternative |
+| Family | Behavioral |
+| Intent | Represent an operation to be performed on the elements of an object structure, so new operations can be added without changing the elements' classes. |
+| Also known as | — |
+| Levels | Classic · .NET |
+| Run | `dotnet run --project src/Patterns.Runner -- visitor` |
+| Code | [`src/Patterns.Behavioral/Visitor/`](../src/Patterns.Behavioral/Visitor/) |
+
+#### The problem
+
+The catalog tree of Composite ([5.3](#53-composite)) needs more and more **operations**: the VAT of a bundle, an indented outline for printing, an export to the supplier's format, a weight for shipping… Adding a method to every node class for every new operation turns the catalog classes into a dumping ground. This pattern uses its own small tree (`CatalogNode` with `ProductNode` and `BundleNode`), the same Starter kit as in Composite.
+
+Two operations are coded:
+
+- **VAT**: books at 4 %, everything else at 21 %, summed without rounding and rounded once at the end. Starter kit: `0.50 + 1.68 + 12.579 = 14.759` → **14.76**.
+- **Outline**: an indented list, two spaces per level, prices with a dot:
+
+```
+Starter kit
+  Clean Code 12.50
+  Coffee Mug 8.00
+  Audio
+    Wireless Headphones 59.90
+```
+
+*Analogy:* a tax inspector visiting businesses. The shops and restaurants do not learn tax law; the inspector brings it, and applies a different rule to each kind of business. A health inspector visiting the same places brings a different set of rules. New inspections need no change to the businesses.
+
+#### Without the pattern
+
+```csharp
+// Each operation is a type switch over the node classes, repeated in every operation:
+decimal VatOf(CatalogNode node)
+{
+    if (node is ProductNode p) return p.Product.Price * (p.Product.Category.Name == "Books" ? 0.04m : 0.21m);
+    if (node is BundleNode b) return b.Children.Sum(VatOf);
+    throw new NotSupportedException(); // a new node type compiles fine and fails here, at run time
+}
+```
+
+In 1994 C++ this was considered fragile: the type checks were casts, and forgetting a node type was silent. That is the problem Visitor solved, and the reason C# pattern matching now competes with it (see "In .NET").
+
+#### Structure
+
+```mermaid
+classDiagram
+    class ICatalogVisitor {
+        <<Visitor>>
+        +Visit(ProductNode node)
+        +Visit(BundleNode node)
+    }
+    class VatVisitor {
+        <<ConcreteVisitor>>
+        +decimal Total
+    }
+    class OutlineVisitor {
+        <<ConcreteVisitor>>
+        +string Text
+    }
+    class CatalogNode {
+        <<Element>>
+        +Accept(ICatalogVisitor visitor)*
+    }
+    class ProductNode {
+        <<ConcreteElement>>
+    }
+    class BundleNode {
+        <<ConcreteElement>>
+    }
+    ICatalogVisitor <|.. VatVisitor
+    ICatalogVisitor <|.. OutlineVisitor
+    CatalogNode <|-- ProductNode
+    CatalogNode <|-- BundleNode
+    CatalogNode ..> ICatalogVisitor : Accept
+```
+
+| Role | Our class | Responsibility |
+|---|---|---|
+| Visitor | `ICatalogVisitor` | One `Visit` overload per element class. |
+| ConcreteVisitor | `VatVisitor`, `OutlineVisitor` | One operation, with a method per element type. |
+| Element | `CatalogNode` | Declares `Accept(visitor)`. |
+| ConcreteElement | `ProductNode`, `BundleNode` | Implement `Accept` by calling `visitor.Visit(this)`. |
+
+#### How it runs
+
+**Double dispatch, step by step.** The operation to run depends on **two** types at once: which visitor (VAT or outline) and which node (product or bundle). A normal virtual call chooses a method by **one** type at run time (the object it is called on): that is *single dispatch*. Visitor gets the second choice with a second call:
+
+1. The client calls `node.Accept(visitor)`. `Accept` is virtual, so the runtime picks the **node's** override: first dispatch, on the node type.
+2. Inside `ProductNode.Accept`, the code is `visitor.Visit(this)`. There, `this` has the static type `ProductNode`, so the **compiler** already chose the `Visit(ProductNode)` overload.
+3. `Visit` is an interface method, so the runtime picks the **visitor's** implementation: second dispatch, on the visitor type.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Node as ProductNode (Clean Code)
+    participant Visitor as VatVisitor
+    Client->>Node: Accept(visitor)
+    Note right of Node: 1st dispatch: ProductNode.Accept runs
+    Node->>Visitor: Visit(this as ProductNode)
+    Note right of Visitor: 2nd dispatch: VatVisitor.Visit(ProductNode) runs
+    Visitor->>Visitor: Total += 12.50 × 0.04
+```
+
+For a bundle, `BundleNode.Accept` calls `visitor.Visit(this)`, and `VatVisitor.Visit(BundleNode)` calls `child.Accept(this)` on each child, so the visit walks the whole tree.
+
+#### By hand
+
+```csharp
+// Role: Visitor — one method per kind of node: the operation, split by node type.
+// Guide: §6.11
+public interface ICatalogVisitor
+{
+    void Visit(ProductNode node);
+    void Visit(BundleNode node);
+}
+
+// Role: ConcreteElement — a product; its only job in the pattern is to say "I am a product".
+public sealed class ProductNode(Product product) : CatalogNode
+{
+    public Product Product => product;
+    public override void Accept(ICatalogVisitor visitor) => visitor.Visit(this); // this: ProductNode
+}
+
+// Role: ConcreteVisitor — computes VAT over a whole tree.
+public sealed class VatVisitor : ICatalogVisitor
+{
+    private decimal _raw; // summed unrounded; rounded once, at the end
+
+    public decimal Total => decimal.Round(_raw, 2, MidpointRounding.AwayFromZero);
+
+    public void Visit(ProductNode node) =>
+        _raw += node.Product.Price * (node.Product.Category.Name == "Books" ? 0.04m : 0.21m);
+
+    public void Visit(BundleNode node)
+    {
+        foreach (var child in node.Children) child.Accept(this); // walk into the bundle
+    }
+}
+```
+
+A new operation (weight, supplier export) is a new visitor class; the node classes do not change. The price: a new **node type** (a gift card) means a new `Visit` method in the interface and in **every** visitor. Visitor makes adding operations easy and adding types hard; plain classes do the opposite. Choose it when the set of types is stable and the operations keep coming.
+
+#### In .NET
+
+**Pattern matching** is the modern alternative ([`2-DotNet/`](../src/Patterns.Behavioral/Visitor/2-DotNet/)). With a closed hierarchy of records, an operation is a function with a `switch` expression; the "dispatch on the node type" is the `switch`:
+
+```csharp
+public abstract record CatalogItem;
+public sealed record ProductItem(Product Product) : CatalogItem;
+public sealed record BundleItem(string Name, IReadOnlyList<CatalogItem> Children) : CatalogItem;
+
+// Guide: §6.11
+public static class VatCalculator
+{
+    public static decimal VatOf(CatalogItem item) =>
+        decimal.Round(RawVat(item), 2, MidpointRounding.AwayFromZero);
+
+    private static decimal RawVat(CatalogItem item) => item switch
+    {
+        ProductItem { Product.Category.Name: "Books" } p => p.Product.Price * 0.04m,
+        ProductItem p => p.Product.Price * 0.21m,
+        BundleItem b => b.Children.Sum(RawVat),
+        _ => throw new NotSupportedException(item.GetType().Name),
+    };
+}
+```
+
+Same result (14.76), no `Accept`, no visitor interface, and the elements know nothing about the operations. What it loses: C# does not yet check that a `switch` over a class hierarchy covers every subtype, so a new record type reaches the `_` arm at run time. That is the trade-off "Without the pattern" described, accepted today because the code is short and the `switch` is all in one place.
+
+**`ExpressionVisitor`** is the BCL's Visitor for expression trees (section [6.3](#63-interpreter)): it has one `Visit…` method per node kind (`VisitBinary`, `VisitConstant`, `VisitMember`…), and you override the ones you care about. EF Core uses visitors like this to translate LINQ into SQL. A small one that collects the constants of a condition:
+
+```csharp
+public sealed class ConstantCollector : ExpressionVisitor
+{
+    public List<object?> Constants { get; } = [];
+
+    protected override Expression VisitConstant(ConstantExpression node)
+    {
+        Constants.Add(node.Value);
+        return base.VisitConstant(node);
+    }
+}
+
+Expression<Func<Order, bool>> rule = o => o.Total > 100m && o.Units < 5;
+var collector = new ConstantCollector();
+collector.Visit(rule); // collector.Constants: [100, 5]
+```
+
+The Roslyn compiler APIs (`CSharpSyntaxVisitor`, `CSharpSyntaxWalker`) are visitors too, used to write analyzers and source generators.
+
+#### When to use it
+
+- A **stable set of element types** (a syntax tree, a document model) and a **growing set of operations** over them.
+- Operations that need different code per element type and want to keep their state together (a running total, an indentation level).
+- Libraries that expose a tree to users: a visitor base class (like `ExpressionVisitor`) lets users write operations without touching the library.
+
+#### When NOT to use it
+
+- **Your own small hierarchy in C#:** a `switch` expression over records does the same with far less code.
+- **The element types change often:** every new type edits every visitor.
+- **One or two operations:** put them on the classes, or write a function.
+
+#### Costs
+
+- Double dispatch is hard to explain and to follow in a debugger.
+- Elements must expose enough state for visitors to work, which weakens encapsulation.
+- New element types are expensive.
+
+#### Relevance today
+
+⭐ **Niche.** You write a visitor class when a library hands you one (`ExpressionVisitor`, Roslyn's syntax visitors). For your own types, pattern matching made the hand-written pattern unnecessary in most cases.
+
+#### Relatives
+
+- **Composite** ([5.3](#53-composite)): visitors usually walk composite trees. Section [9.1](#91-combinations-you-will-meet-in-real-code) combines them.
+- **Interpreter** ([6.3](#63-interpreter)): the syntax tree of an interpreter is the typical structure a visitor works on.
+- **Iterator** ([6.4](#64-iterator)) hands you elements; a visitor runs type-specific code on each one.
+
+#### Try it
+
+```bash
+dotnet run --project src/Patterns.Runner -- visitor
+```
+
+1. Write a `ProductCountVisitor` and the same operation as a `switch` function. Compare their length.
+2. Add a `GiftCardNode`: how many files must change in Classic? And in the .NET level, what happens if you forget the new case?
+3. Extend `ConstantCollector` to also collect member names (`Total`, `Units`) by overriding `VisitMember`.
+
+#### Interview questions
+
+<details>
+<summary>What is double dispatch?</summary>
+
+Choosing the code to run by the run-time types of two objects. Visitor does it with two virtual calls: `element.Accept(visitor)` picks the element's method, which calls `visitor.Visit(this)` and picks the visitor's method for that element type.
+</details>
+
+<details>
+<summary>What does Visitor make easy, and what does it make hard?</summary>
+
+It makes adding new operations easy (a new visitor class) and adding new element types hard (every visitor needs a new method).
+</details>
+
+<details>
+<summary>How does C# pattern matching replace Visitor?</summary>
+
+A `switch` expression on the element's type (with property patterns for details) dispatches per type in one function, with no `Accept` methods. It trades the compiler's completeness check for much less code.
+</details>
 
 ---
 
