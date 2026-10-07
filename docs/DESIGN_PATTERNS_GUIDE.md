@@ -129,8 +129,9 @@ Any editor works (Visual Studio and Rider too). With **Visual Studio Code** (VS 
 | Extension | Why |
 |---|---|
 | **C# Dev Kit** (`ms-dotnettools.csdevkit`) | IntelliSense, go-to-definition, the Solution Explorer and the Test Explorer for C#. |
-| **Markdown Preview Mermaid Support** (`bierner.markdown-mermaid`) | Draws the diagrams of this guide in VS Code's Markdown preview (`Ctrl+Shift+V`). GitHub draws them on its own. |
 | **EditorConfig** (`editorconfig.editorconfig`) | Applies the formatting rules of `.editorconfig` as you type (section [2.2](#22-root-build-files)). |
+
+The Mermaid diagrams of this guide need no extension: VS Code's Markdown preview (`Ctrl+Shift+V`) draws them on its own, as GitHub does.
 
 ### 1.3 Everyday commands
 
