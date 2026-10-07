@@ -1,7 +1,6 @@
 {
   "recommendations": [
     "ms-dotnettools.csdevkit",
-    "editorconfig.editorconfig",
-    "bierner.markdown-mermaid"
+    "editorconfig.editorconfig"
   ]
 }
