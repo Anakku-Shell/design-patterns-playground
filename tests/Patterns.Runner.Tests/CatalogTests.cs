@@ -20,6 +20,17 @@ public sealed class CatalogTests
         ("facade", Relevance.Essential),
         ("flyweight", Relevance.Historical),
         ("proxy", Relevance.Useful),
+        ("chain-of-responsibility", Relevance.Essential),
+        ("command", Relevance.Useful),
+        ("interpreter", Relevance.Historical),
+        ("iterator", Relevance.Essential),
+        ("mediator", Relevance.Useful),
+        ("memento", Relevance.Niche),
+        ("observer", Relevance.Essential),
+        ("state", Relevance.Useful),
+        ("strategy", Relevance.Essential),
+        ("template-method", Relevance.Useful),
+        ("visitor", Relevance.Niche),
     ];
 
     [Fact]

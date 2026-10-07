@@ -22,17 +22,17 @@ Relevance: ⭐⭐⭐ Essential · ⭐⭐ Useful · ⭐ Niche · 🕰 Historical 
 | Structural | [Facade](docs/DESIGN_PATTERNS_GUIDE.md#55-facade) | ⭐⭐⭐ | P C N | `facade` | ready |
 | Structural | [Flyweight](docs/DESIGN_PATTERNS_GUIDE.md#56-flyweight) | 🕰 | C N | `flyweight` | ready |
 | Structural | [Proxy](docs/DESIGN_PATTERNS_GUIDE.md#57-proxy) | ⭐⭐ | P C N | `proxy` | ready |
-| Behavioral | [Chain of Responsibility](docs/DESIGN_PATTERNS_GUIDE.md#61-chain-of-responsibility) | ⭐⭐⭐ | P C N | `chain-of-responsibility` | planned |
-| Behavioral | [Command](docs/DESIGN_PATTERNS_GUIDE.md#62-command) | ⭐⭐ | P C N | `command` | planned |
-| Behavioral | [Interpreter](docs/DESIGN_PATTERNS_GUIDE.md#63-interpreter) | 🕰 | C N | `interpreter` | planned |
-| Behavioral | [Iterator](docs/DESIGN_PATTERNS_GUIDE.md#64-iterator) | ⭐⭐⭐ | P C N | `iterator` | planned |
-| Behavioral | [Mediator](docs/DESIGN_PATTERNS_GUIDE.md#65-mediator) | ⭐⭐ | P C N | `mediator` | planned |
-| Behavioral | [Memento](docs/DESIGN_PATTERNS_GUIDE.md#66-memento) | ⭐ | C N | `memento` | planned |
-| Behavioral | [Observer](docs/DESIGN_PATTERNS_GUIDE.md#67-observer) | ⭐⭐⭐ | P C N | `observer` | planned |
-| Behavioral | [State](docs/DESIGN_PATTERNS_GUIDE.md#68-state) | ⭐⭐ | P C N | `state` | planned |
-| Behavioral | [Strategy](docs/DESIGN_PATTERNS_GUIDE.md#69-strategy) | ⭐⭐⭐ | P C N | `strategy` | planned |
-| Behavioral | [Template Method](docs/DESIGN_PATTERNS_GUIDE.md#610-template-method) | ⭐⭐ | P C N | `template-method` | planned |
-| Behavioral | [Visitor](docs/DESIGN_PATTERNS_GUIDE.md#611-visitor) | ⭐ | C N | `visitor` | planned |
+| Behavioral | [Chain of Responsibility](docs/DESIGN_PATTERNS_GUIDE.md#61-chain-of-responsibility) | ⭐⭐⭐ | P C N | `chain-of-responsibility` | ready |
+| Behavioral | [Command](docs/DESIGN_PATTERNS_GUIDE.md#62-command) | ⭐⭐ | P C N | `command` | ready |
+| Behavioral | [Interpreter](docs/DESIGN_PATTERNS_GUIDE.md#63-interpreter) | 🕰 | C N | `interpreter` | ready |
+| Behavioral | [Iterator](docs/DESIGN_PATTERNS_GUIDE.md#64-iterator) | ⭐⭐⭐ | P C N | `iterator` | ready |
+| Behavioral | [Mediator](docs/DESIGN_PATTERNS_GUIDE.md#65-mediator) | ⭐⭐ | P C N | `mediator` | ready |
+| Behavioral | [Memento](docs/DESIGN_PATTERNS_GUIDE.md#66-memento) | ⭐ | C N | `memento` | ready |
+| Behavioral | [Observer](docs/DESIGN_PATTERNS_GUIDE.md#67-observer) | ⭐⭐⭐ | P C N | `observer` | ready |
+| Behavioral | [State](docs/DESIGN_PATTERNS_GUIDE.md#68-state) | ⭐⭐ | P C N | `state` | ready |
+| Behavioral | [Strategy](docs/DESIGN_PATTERNS_GUIDE.md#69-strategy) | ⭐⭐⭐ | P C N | `strategy` | ready |
+| Behavioral | [Template Method](docs/DESIGN_PATTERNS_GUIDE.md#610-template-method) | ⭐⭐ | P C N | `template-method` | ready |
+| Behavioral | [Visitor](docs/DESIGN_PATTERNS_GUIDE.md#611-visitor) | ⭐ | C N | `visitor` | ready |
 | Modern | [Dependency Injection](docs/DESIGN_PATTERNS_GUIDE.md#71-dependency-injection) | ⭐⭐⭐ | P C N | `dependency-injection` | planned |
 | Modern | [Options](docs/DESIGN_PATTERNS_GUIDE.md#72-options) | ⭐⭐⭐ | P C N | `options` | planned |
 | Modern | [Repository](docs/DESIGN_PATTERNS_GUIDE.md#73-repository) | ⭐⭐ | P C N | `repository` | planned |

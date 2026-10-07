@@ -254,7 +254,7 @@ src/Patterns.Behavioral/Strategy/
   StrategyDemo.cs    namespace Patterns.Behavioral.Strategy           (what the runner executes)
 ```
 
-**The levels never share the pattern's own types.** If Problem and Classic both need a "shipping calculator", each level declares its own. That duplication is deliberate: each level must be readable on its own, and comparing two files side by side is the point. The one exception is "someone else's code" that the pattern wraps or coordinates (the carrier SDK in Adapter, the subsystems in Facade, the image store in Proxy): it lives in its own sub-folder of the pattern and every level uses the same one, because in real life you could not change it either. Types that a pattern needs and the shop does not have (a carrier client, a notifier, a bundle…) live in the pattern's folder, not in `Patterns.Shop`.
+**The levels never share the pattern's own types.** If Problem and Classic both need a "shipping calculator", each level declares its own. That duplication is deliberate: each level must be readable on its own, and comparing two files side by side is the point. The one exception is "someone else's code" that the pattern wraps or coordinates (the carrier SDK in Adapter, the subsystems in Facade, the image store in Proxy): it lives in its own sub-folder of the pattern and every level uses the same one, because in real life you could not change it either. The other exception is Interpreter's .NET level ([6.3](#63-interpreter)), which compiles the tree the Classic parser builds: that tree is its input. Types that a pattern needs and the shop does not have (a carrier client, a notifier, a bundle…) live in the pattern's folder, not in `Patterns.Shop`.
 
 **Comments are part of the lesson.** Three kinds appear in pattern code:
 
@@ -3511,12 +3511,14 @@ public sealed class OrderValidator
     // means editing (and re-testing) this method.
     public OrderCheck Validate(Order order)
     {
-        if (order.Lines.Count == 0) return OrderCheck.Fail("Order has no lines.");
-        if (order.Lines.Any(l => l.Quantity > 10)) return OrderCheck.Fail("At most 10 units per product.");
+        if (order.Lines.Count == 0) { return OrderCheck.Fail("Order has no lines."); }
+        if (order.Lines.Any(l => l.Quantity > 10)) { return OrderCheck.Fail("At most 10 units per product."); }
         var missing = order.Lines.FirstOrDefault(l => l.Product.Stock < l.Quantity);
-        if (missing is not null) return OrderCheck.Fail($"Not enough stock for {missing.Product.Name}.");
+        if (missing is not null) { return OrderCheck.Fail($"Not enough stock for {missing.Product.Name}."); }
         if (order.ShippingAddress.Country is not ("ES" or "PT" or "FR"))
+        {
             return OrderCheck.Fail($"We do not ship to {order.ShippingAddress.Country}.");
+        }
         return OrderCheck.Ok;
     }
 }
@@ -3595,7 +3597,7 @@ public abstract class OrderRule
     public OrderCheck Check(Order order)
     {
         var result = Passes(order);
-        if (!result.IsValid) return result;           // stop: first failure wins
+        if (!result.IsValid) { return result; }       // stop: first failure wins
         return _next?.Check(order) ?? OrderCheck.Ok;  // pass it on (or we were the last)
     }
 
@@ -3625,7 +3627,8 @@ Each rule is a small class with one reason to change. Adding a rule is a new cla
 // Guide: §6.1
 public static class OrderPipeline
 {
-    public static RequestDelegate Build(List<string> trace)
+    // ICollection, not List: public APIs do not expose List<T> (analyzer CA1002).
+    public static RequestDelegate Build(ICollection<string> trace)
     {
         var app = new ApplicationBuilder(new ServiceCollection().BuildServiceProvider());
 
@@ -3785,9 +3788,12 @@ public sealed class UndoableCart(Cart cart)
 
     public void Add(Product product, int quantity)
     {
+        var before = cart.Items.GetValueOrDefault(product.Id); // what undo must restore
         cart.Add(product, quantity);
-        (_lastAction, _lastProduct, _lastQuantity) = ("add", product, quantity);
+        (_lastAction, _lastProduct, _lastQuantity) = ("add", product, before);
     }
+
+    // Remove(product) is the same: it records ("remove", product, the quantity it had).
 
     public void Undo()
     {
@@ -3795,8 +3801,11 @@ public sealed class UndoableCart(Cart cart)
         // ("apply coupon", "change quantity") adds a case to this switch.
         switch (_lastAction)
         {
-            case "add": cart.Remove(_lastProduct!.Id); break;
-            case "remove": cart.Add(_lastProduct!, _lastQuantity); break;
+            case "add":
+                cart.Remove(_lastProduct!.Id);
+                if (_lastQuantity > 0) { cart.Add(_lastProduct, _lastQuantity); }
+                break;
+            case "remove" when _lastQuantity > 0: cart.Add(_lastProduct!, _lastQuantity); break;
         }
         _lastAction = null;
     }
@@ -3889,7 +3898,7 @@ public sealed class RemoveItemCommand(Cart cart, Product product) : ICartCommand
 
     public void Undo()
     {
-        if (_removedQuantity > 0) cart.Add(product, _removedQuantity); // nothing removed, nothing to restore
+        if (_removedQuantity > 0) { cart.Add(product, _removedQuantity); } // nothing removed, nothing to restore
     }
 }
 
@@ -3906,7 +3915,7 @@ public sealed class CartHistory
 
     public bool Undo()
     {
-        if (!_done.TryPop(out var command)) return false;
+        if (!_done.TryPop(out var command)) { return false; }
         command.Undo();
         return true;
     }
@@ -3933,24 +3942,36 @@ public sealed class ActionHistory
 
     public bool Undo()
     {
-        if (!_done.TryPop(out var action)) return false;
+        if (!_done.TryPop(out var action)) { return false; }
         action.Undo();
         return true;
     }
 }
 
-// Each command is written where it is created, as two lambdas over the cart.
-var before = cart.Items.GetValueOrDefault(SampleData.Book.Id); // what undo must restore
-history.Run(new UndoableAction("add 2 x Clean Code",
-    Do: () => cart.Add(SampleData.Book, 2),
-    Undo: () =>
+// The cart's commands, as two lambdas each (CartActions.Remove is the same idea).
+public static class CartActions
+{
+    public static UndoableAction Add(Cart cart, Product product, int quantity)
     {
-        cart.Remove(SampleData.Book.Id);
-        if (before > 0) cart.Add(SampleData.Book, before);
-    }));
+        var before = 0; // what undo must restore
+        return new UndoableAction($"add {quantity} x {product.Name}",
+            Do: () =>
+            {
+                before = cart.Items.GetValueOrDefault(product.Id); // read when it runs, not when it is created
+                cart.Add(product, quantity);
+            },
+            Undo: () =>
+            {
+                cart.Remove(product.Id);
+                if (before > 0) { cart.Add(product, before); }
+            });
+    }
+}
+
+history.Run(CartActions.Add(cart, SampleData.Book, 2)); // Name: "add 2 x Clean Code"
 ```
 
-The lambdas **capture** the cart and the product (a *closure*: a function that keeps references to the variables around it), which is exactly what a ConcreteCommand's fields did. No classes, same pattern. The `Name` is there for an "undo add 2 x Clean Code" menu item or a log.
+The lambdas **capture** the cart and the product (a *closure*: a function that keeps references to the variables around it), which is exactly what a ConcreteCommand's fields did; `before` is a captured variable the two lambdas share, set when `Do` runs (reading it when the action is created would restore the wrong quantity if the cart changes in between). No command classes, same pattern. The `Name` is there for an "undo add 2 x Clean Code" menu item or a log.
 
 Other commands you meet in .NET: `ICommand` in WPF and MAUI (buttons bound to commands, with `CanExecute`); the request objects of the Mediator section ([6.5](#65-mediator)); work items queued to a `Channel<T>` or a background queue; `Task.Run(() => …)` takes a command.
 
@@ -4162,7 +4183,7 @@ With the rule `total > 100 AND category = 'books'`: 9 books (112.50) → true; 7
 
 #### In .NET
 
-**Expression trees** (`System.Linq.Expressions`) are .NET's built-in representation of code as a tree of objects, and they can be **compiled** to real, fast code. The DotNet level parses the rule with the same parser and then translates the tree into an expression tree ([`2-DotNet/`](../src/Patterns.Behavioral/Interpreter/2-DotNet/)):
+**Expression trees** (`System.Linq.Expressions`) are .NET's built-in representation of code as a tree of objects, and they can be **compiled** to real, fast code. The DotNet level parses the rule with the Classic parser (the one place where a level uses another level's types: the tree is its input) and then translates the tree into an expression tree ([`2-DotNet/`](../src/Patterns.Behavioral/Interpreter/2-DotNet/)):
 
 ```csharp
 // Guide: §6.3
@@ -4177,7 +4198,7 @@ public static class RuleCompiler
 
     private static Expression Translate(IRuleExpression node, ParameterExpression order) => node switch
     {
-        TotalGreaterThan t when t.OrEqual => Expression.GreaterThanOrEqual(Total(order), Expression.Constant(t.Amount)),
+        TotalGreaterThan { OrEqual: true } t => Expression.GreaterThanOrEqual(Total(order), Expression.Constant(t.Amount)),
         TotalGreaterThan t => Expression.GreaterThan(Total(order), Expression.Constant(t.Amount)),
         HasCategory c => AnyLineIn(order, c.Name),          // a call to Enumerable.Any over order.Lines
         AndExpression a => Expression.AndAlso(Translate(a.Left, order), Translate(a.Right, order)),
@@ -4270,10 +4291,13 @@ From [`0-Problem/`](../src/Patterns.Behavioral/Iterator/0-Problem/):
 ```csharp
 public sealed class OrderHistory
 {
-    public List<Order> Orders { get; } = []; // PAIN: the storage is public; callers depend on it being a List
+    // PAIN: the storage is public; callers depend on it being a List (they call GetRange on it).
+    [SuppressMessage("Design", "CA1002:Do not expose generic lists",
+        Justification = "The pain this level shows: the analyzer flags exactly this leak.")]
+    public List<Order> Orders { get; } = [];
 }
 
-// Every caller repeats the paging arithmetic:
+// Every caller (here HistoryScreen, the order history page) repeats the paging arithmetic:
 for (var start = 0; start < history.Orders.Count; start += pageSize)
 {
     // PAIN: Math.Min and the bounds are easy to get wrong (an off-by-one here loses the last page).
@@ -4365,7 +4389,7 @@ public sealed class OrderHistory(IEnumerable<Order> orders)
 
         public IReadOnlyList<Order> GetNext()
         {
-            if (!HasNext) throw new InvalidOperationException("No more pages.");
+            if (!HasNext) { throw new InvalidOperationException("No more pages."); }
             var page = orders.GetRange(_position, Math.Min(pageSize, orders.Count - _position));
             _position += page.Count;
             return page;
@@ -4382,16 +4406,29 @@ You should **never write that class**: C# writes it for you. A method that retur
 
 ```csharp
 // Guide: §6.4
-public IEnumerable<IReadOnlyList<Order>> Pages(int pageSize)
+// The source stays an IEnumerable<Order> (it could be a database read): pages are built only when asked for.
+public sealed class OrderHistory(IEnumerable<Order> orders)
 {
-    ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1); // see the note on laziness below
-    return PagesCore(pageSize);
-}
+    public IEnumerable<IReadOnlyList<Order>> Pages(int pageSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1); // see the note on laziness below
+        return PagesCore(pageSize);
+    }
 
-private IEnumerable<IReadOnlyList<Order>> PagesCore(int pageSize)
-{
-    for (var start = 0; start < _orders.Count; start += pageSize)
-        yield return _orders.GetRange(start, Math.Min(pageSize, _orders.Count - start));
+    private IEnumerable<IReadOnlyList<Order>> PagesCore(int pageSize)
+    {
+        var page = new List<Order>(pageSize);
+        foreach (var order in orders)
+        {
+            page.Add(order);
+            if (page.Count == pageSize)
+            {
+                yield return page; // pauses here until the caller asks for the next page
+                page = new List<Order>(pageSize);
+            }
+        }
+        if (page.Count > 0) { yield return page; }
+    }
 }
 ```
 
@@ -4408,9 +4445,9 @@ using (IEnumerator<IReadOnlyList<Order>> e = history.Pages(3).GetEnumerator())
 }                             // Dispose: lets the iterator clean up (close a file, a connection)
 ```
 
-**What `yield return` really does.** The compiler rewrites the method into a hidden class that implements `IEnumerator<T>`, with a field holding a **state** number (where the method was paused) and fields for its local variables (`start`). Each `MoveNext()` runs the method's code from where it stopped until the next `yield return`, stores the value in `Current`, remembers the position and returns `true`; when the method ends, `MoveNext()` returns `false`. It is a **state machine** generated from ordinary-looking code, the same idea the compiler uses for `async`/`await`.
+**What `yield return` really does.** The compiler rewrites the method into a hidden class that implements `IEnumerator<T>`, with a field holding a **state** number (where the method was paused) and fields for its local variables (`page`, the enumerator of `orders`). Each `MoveNext()` runs the method's code from where it stopped until the next `yield return`, stores the value in `Current`, remembers the position and returns `true`; when the method ends, `MoveNext()` returns `false`. It is a **state machine** generated from ordinary-looking code, the same idea the compiler uses for `async`/`await`.
 
-**Laziness.** Nothing in an iterator method runs until someone starts enumerating, and then only as far as they go. `history.Pages(3).First()` builds **one** page, never the rest; the test `Yield_IsLazy` uses a counting source to prove it. Two consequences:
+**Laziness.** Nothing in an iterator method runs until someone starts enumerating, and then only as far as they go. `history.Pages(3).First()` reads three orders from the source and builds **one** page, never the rest; the test `Yield_IsLazy` uses a counting source to prove it. Two consequences:
 
 - Argument checks inside an iterator method would also be delayed until the first `MoveNext()`. That is why `Pages` checks `pageSize` and then calls a separate `PagesCore` that holds the `yield`.
 - Enumerating twice runs the code twice. If the source is expensive (a database query), materialise it once with `ToList()`.
@@ -4418,17 +4455,18 @@ using (IEnumerator<IReadOnlyList<Order>> e = history.Pages(3).GetEnumerator())
 **`IAsyncEnumerable<T>`** is the same pattern when getting each element needs `await` (a page from an API, rows from a database):
 
 ```csharp
+// RemoteOrders.StreamAsync; the real one also takes a CancellationToken marked [EnumeratorCancellation].
 public static async IAsyncEnumerable<Order> StreamAsync(FakeOrderApi api)
 {
     for (var page = 1; ; page++)
     {
         var orders = await api.GetPageAsync(page); // a call only when the consumer asks for more
-        if (orders.Count == 0) yield break;
-        foreach (var order in orders) yield return order;
+        if (orders.Count == 0) { yield break; }
+        foreach (var order in orders) { yield return order; }
     }
 }
 
-await foreach (var order in StreamAsync(api)) { /* api.Calls grows as you consume */ }
+await foreach (var order in RemoteOrders.StreamAsync(api)) { /* api.Calls grows as you consume */ }
 ```
 
 For in-memory paging, LINQ already has it: `orders.Chunk(3)` (.NET 6+) returns the pages as arrays.
@@ -4632,7 +4670,9 @@ public sealed class Dispatcher
     public TResponse Send<TResponse>(IRequest<TResponse> request)
     {
         if (!_handlers.TryGetValue(request.GetType(), out var handle))
+        {
             throw new InvalidOperationException($"No handler registered for {request.GetType().Name}.");
+        }
         return (TResponse)handle(request)!;
     }
 }
@@ -4647,10 +4687,13 @@ The endpoint now depends on one thing, the dispatcher. Each handler is small, fo
 The BCL has no mediator; the DotNet level builds one over the DI container in about 40 lines ([`2-DotNet/`](../src/Patterns.Behavioral/Mediator/2-DotNet/)). Handlers are ordinary registered services, so they receive their own dependencies by constructor injection:
 
 ```csharp
+// AddOrderRequests(this IServiceCollection services) in the DotNet level:
 services.AddSingleton<OrderStore>();
+services.AddSingleton<PriceCheck>();
+services.AddSingleton<AuditLog>();
 services.AddTransient<IRequestHandler<PlaceOrder, Guid>, PlaceOrderHandler>();
 services.AddTransient<IRequestHandler<GetOrderTotal, decimal>, GetOrderTotalHandler>();
-services.AddSingleton<Dispatcher>();
+services.AddTransient<Dispatcher>();
 
 // Guide: §6.5
 public sealed class Dispatcher(IServiceProvider provider)
@@ -4663,13 +4706,13 @@ public sealed class Dispatcher(IServiceProvider provider)
             ?? throw new InvalidOperationException($"No handler registered for {request.GetType().Name}.");
 
         // Reflection; DoNotWrapExceptions keeps the handler's own exception type for the caller.
-        return (TResponse)handlerType.GetMethod("Handle")!
+        return (TResponse)handlerType.GetMethod(nameof(IRequestHandler<PlaceOrder, Guid>.Handle))!
             .Invoke(handler, BindingFlags.DoNotWrapExceptions, binder: null, [request], culture: null)!;
     }
 }
 ```
 
-That is the core of what MediatR does (MediatR caches the handler lookups and adds async, notifications and pipeline behaviours on top).
+That is the core of what MediatR does (MediatR caches the handler lookups and adds async, notifications and pipeline behaviours on top). The dispatcher is registered as **transient**, like the handlers: a singleton would resolve every handler from the root provider, keeping disposable handlers alive until the application stops and failing for handlers with scoped dependencies.
 
 #### In the ecosystem
 
@@ -4849,7 +4892,7 @@ public sealed class CartCaretaker(Cart cart)
 
     public bool Undo()
     {
-        if (!_history.TryPop(out var snapshot)) return false;
+        if (!_history.TryPop(out var snapshot)) { return false; }
         cart.Restore(snapshot);
         return true;
     }
@@ -5066,7 +5109,7 @@ public sealed class OrderPublisher
             try { observer.OnOrderPlaced(order); }
             catch (Exception ex) { failures.Add(ex); }
         }
-        if (failures.Count > 0) throw new AggregateException(failures);
+        if (failures.Count > 0) { throw new AggregateException(failures); }
     }
 }
 ```
@@ -5117,7 +5160,8 @@ An `event` is a **multicast delegate**: one delegate that holds a list of method
 **`IObservable<T>` / `IObserver<T>`** are the BCL's interfaces for a *stream* of notifications: `OnNext(value)` for each item, `OnError(exception)` and `OnCompleted()` at the end. `Subscribe` returns an `IDisposable`, which makes unsubscribing explicit and leak-proof with `using`:
 
 ```csharp
-public sealed class OrderStream : IObservable<Order>
+// Named OrderFeed, not OrderStream: analyzer CA1711 keeps the "Stream" suffix for System.IO.Stream types.
+public sealed class OrderFeed : IObservable<Order>
 {
     private readonly List<IObserver<Order>> _observers = [];
 
@@ -5129,7 +5173,7 @@ public sealed class OrderStream : IObservable<Order>
 
     public void Publish(Order order)
     {
-        foreach (var observer in _observers.ToList()) observer.OnNext(order);
+        foreach (var observer in _observers.ToList()) { observer.OnNext(order); }
     }
 
     private sealed class Unsubscriber(Action unsubscribe) : IDisposable
@@ -5138,6 +5182,8 @@ public sealed class OrderStream : IObservable<Order>
     }
 }
 ```
+
+The DotNet level subscribes a `LoggingObserver(log, describe)`, an `IObserver<Order>` that writes one line per order; the three lines come from `Reactions.Email`, `Reactions.Stock` and `Reactions.Analytics`, which the event handlers use too.
 
 **`IChangeToken`** is the pull-style observer used by configuration and file providers: `ChangeToken.OnChange(() => configuration.GetReloadToken(), () => …)` runs your callback when `appsettings.json` changes, and you read the new values yourself.
 
@@ -5252,13 +5298,13 @@ public sealed class OrderWorkflow
     {
         // PAIN: the rules of each status are scattered across four methods. To know everything a
         // Paid order can do, you read all of them.
-        if (Status != OrderStatus.Placed) throw Illegal("pay");
+        if (Status != OrderStatus.Placed) { throw Illegal("pay"); }
         Status = OrderStatus.Paid;
     }
 
     public void Cancel()
     {
-        if (Status is OrderStatus.Shipped or OrderStatus.Cancelled) throw Illegal("cancel");
+        if (Status is OrderStatus.Shipped or OrderStatus.Cancelled) { throw Illegal("cancel"); }
         Status = OrderStatus.Cancelled;
     }
     // Place() and Ship() repeat the same shape…
@@ -5591,6 +5637,7 @@ Each rule is its own class with its own tests (`Standard_AtExactly50_IsFree`). A
 **Keyed services** let the container hold all the strategies and pick one by name at run time ([`2-DotNet/`](../src/Patterns.Behavioral/Strategy/2-DotNet/)):
 
 ```csharp
+// AddShippingStrategies(this IServiceCollection services) in the DotNet level:
 services.AddKeyedSingleton<IShippingStrategy, StandardShipping>("standard");
 services.AddKeyedSingleton<IShippingStrategy, ExpressShipping>("express");
 services.AddKeyedSingleton<IShippingStrategy, StorePickup>("pickup");
@@ -5610,11 +5657,13 @@ Compare with the Problem level: the same `CostFor(order, method)` signature, but
 ```csharp
 public static class ShippingRules
 {
-    public static readonly Func<Order, decimal> Standard = order => order.Total >= 50.00m ? 0.00m : 4.99m;
-    public static readonly Func<Order, decimal> Express = order => 9.99m + 1.00m * order.Units;
-}
+    public static Func<Order, decimal> Standard { get; } = order => order.Total >= 50.00m ? 0.00m : 4.99m;
+    public static Func<Order, decimal> Express { get; } = order => 9.99m + 1.00m * order.Units;
+    public static Func<Order, decimal> Pickup { get; } = _ => 0.00m;
 
-decimal Price(Order order, Func<Order, decimal> shipping) => order.Total + shipping(order);
+    // Takes any strategy: PriceWith(threeBooks, ShippingRules.Express) is 37.50 + 12.99 = 50.49.
+    public static decimal PriceWith(Order order, Func<Order, decimal> shipping) => order.Total + shipping(order);
+}
 ```
 
 **Strategy vs `Func<>` vs keyed services:**
@@ -5734,7 +5783,9 @@ public sealed class CsvExporter
                              .OrderByDescending(o => o.Total).ThenBy(o => o.Id);
         var csv = new StringBuilder("id,customer,status,total\n");
         foreach (var order in selected)
+        {
             csv.Append(CultureInfo.InvariantCulture, $"{order.Id},{order.Customer.Name},{order.Status},{order.Total:0.00}\n");
+        }
         return csv.ToString();
     }
 }
@@ -5812,7 +5863,9 @@ public abstract class OrderExporter
                              .ToList();
         var text = new StringBuilder(Header());
         for (var i = 0; i < selected.Count; i++)
+        {
             text.Append(Row(selected[i], isLast: i == selected.Count - 1));
+        }
         return text.Append(Footer()).ToString();
     }
 
@@ -5852,11 +5905,12 @@ The selection rules live in one place; a new format is a subclass with two or th
 ```csharp
 // Role: ConcreteClass — fills in the one step BackgroundService leaves open.
 // Guide: §6.10
-public sealed class NightlyExportService(IEnumerable<Order> orders, StringWriter output) : BackgroundService
+public sealed class NightlyExportService(IEnumerable<Order> orders, TextWriter output) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        output.Write(new CsvOrderExporter().Export(orders)); // export once, then finish
+        // OrderCsv is this level's own CSV writer, with the same rules (levels never share the pattern's types).
+        output.Write(OrderCsv.Export(orders)); // export once, then finish
         return Task.CompletedTask;
     }
 }
@@ -5898,7 +5952,7 @@ The host calls `StartAsync`, which calls your `ExecuteAsync`: the Hollywood prin
 dotnet run --project src/Patterns.Runner -- template-method
 ```
 
-1. Also skip `Cancelled` orders: change one line in Classic, two in Problem.
+1. Also skip `Cancelled` orders: change one line in Classic, two in Problem, and one in the DotNet level's own `OrderCsv` (each level keeps its own copy).
 2. Write a `MarkdownOrderExporter` that produces a table, overriding the footer hook if needed.
 3. Rewrite the Classic level with composition: `OrderExporter(IOrderFormat format)`. What does each version make easy?
 
@@ -6062,7 +6116,10 @@ public sealed class VatVisitor : ICatalogVisitor
 
     public void Visit(BundleNode node)
     {
-        foreach (var child in node.Children) child.Accept(this); // walk into the bundle
+        foreach (var child in node.Children)
+        {
+            child.Accept(this); // walk into the bundle
+        }
     }
 }
 ```
@@ -6101,11 +6158,13 @@ Same result (14.76), no `Accept`, no visitor interface, and the elements know no
 ```csharp
 public sealed class ConstantCollector : ExpressionVisitor
 {
-    public List<object?> Constants { get; } = [];
+    private readonly List<object?> _constants = [];
+
+    public IReadOnlyList<object?> Constants => _constants; // not List<T>: analyzer CA1002
 
     protected override Expression VisitConstant(ConstantExpression node)
     {
-        Constants.Add(node.Value);
+        _constants.Add(node.Value);
         return base.VisitConstant(node);
     }
 }
@@ -8078,6 +8137,7 @@ Alphabetical. Each term links to the section that explains it.
 - **Double-checked locking** — A hand-written lazy, thread-safe initialisation with two null checks around a lock; replaced by `Lazy<T>`. → [4.1](#41-singleton)
 - **DTO (data transfer object)** — A plain object that only carries data across a boundary (an API, a message). → [5.1](#51-adapter)
 - **Encapsulate what varies** — Put the part that changes behind its own boundary so the rest does not change with it. → [3.5](#35-the-principles-under-the-patterns)
+- **`[EnumeratorCancellation]`** — An attribute on an async iterator's `CancellationToken` parameter, so a token passed with `WithCancellation` reaches the method. → [6.4](#64-iterator)
 - **Equivalence test** — A test proving that the levels of a pattern give the same result for the same input. → [2.5](#25-kinds-of-tests)
 - **`event`** — C#'s built-in Observer: a multicast delegate that outsiders can only subscribe to and unsubscribe from. → [6.7](#67-observer)
 - **Expression tree** — Code represented as a tree of objects (`System.Linq.Expressions`) that can be inspected, translated to SQL or compiled. → [6.3](#63-interpreter)
