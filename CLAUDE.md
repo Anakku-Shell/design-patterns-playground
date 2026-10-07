@@ -13,7 +13,7 @@ The explanations live in `docs/DESIGN_PATTERNS_GUIDE.md`, written before the cod
 - `src/Patterns.Runner/`: the console app (`list`, `<key>`, `all`); `Catalog.All` concatenates the four `Demos.All`.
 - `tests/Patterns.<Category>.Tests/`: one test class per pattern (`StrategyTests`). `tests/Patterns.Runner.Tests/`: shop, narrator, runner and catalog. `tests/Patterns.ArchitectureTests/`: the structural rules.
 - `scripts/check-guide.sh`: checks the guide's table-of-contents links and writes `artifacts/mermaid-check.html` (open it in a browser; it must end with `All N diagrams parsed.`).
-- Built so far: foundations (shop, demo contract, runner, architecture tests) and the five creational patterns (Singleton, Factory Method, Abstract Factory, Builder with the `AnOrder` test data builder, Prototype). Next: structural patterns.
+- Built so far: foundations (shop, demo contract, runner, architecture tests), the five creational patterns (Singleton, Factory Method, Abstract Factory, Builder with the `AnOrder` test data builder, Prototype) and the seven structural ones (Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy). Next: behavioral patterns.
 
 ## Levels and folder rules
 
@@ -21,7 +21,7 @@ Each pattern folder (`src/Patterns.Behavioral/Strategy/`):
 
 - `0-Problem/` (Essential and Useful patterns only), `1-Classic/`, `2-DotNet/`, `<Pattern>Demo.cs`, `README.md`.
 - Namespaces drop the number: `Patterns.<Category>.<Pattern>.Problem|Classic|DotNet` (IDE0130 is off for this reason).
-- **Levels never share the pattern's own types**: each level declares its own, so it reads on its own. The exception is "someone else's code" the pattern wraps (Adapter `External/`, Facade `Subsystems/`, Proxy's image store), which lives in its own sub-folder and is shared.
+- **Levels never share the pattern's own types**: each level declares its own, so it reads on its own. The exception is "someone else's code" the pattern wraps (Adapter `External/`, Facade `Subsystems/`, Proxy `Common/`), which lives in its own sub-folder and is shared.
 - The DotNet level codes the first .NET item of the pattern's catalog row; the rest appear only in the guide.
 - The demo narrates each level with `Narrator`, uses `SampleData`, ends with a takeaway, and is added to its category's `Demos.All` and to `CatalogTests.Expected`.
 

@@ -15,13 +15,13 @@ Relevance: ⭐⭐⭐ Essential · ⭐⭐ Useful · ⭐ Niche · 🕰 Historical 
 | Creational | [Abstract Factory](docs/DESIGN_PATTERNS_GUIDE.md#43-abstract-factory) | ⭐ | C N | `abstract-factory` | ready |
 | Creational | [Builder](docs/DESIGN_PATTERNS_GUIDE.md#44-builder) | ⭐⭐⭐ | P C N | `builder` | ready |
 | Creational | [Prototype](docs/DESIGN_PATTERNS_GUIDE.md#45-prototype) | 🕰 | C N | `prototype` | ready |
-| Structural | [Adapter](docs/DESIGN_PATTERNS_GUIDE.md#51-adapter) | ⭐⭐⭐ | P C N | `adapter` | planned |
-| Structural | [Bridge](docs/DESIGN_PATTERNS_GUIDE.md#52-bridge) | ⭐ | C N | `bridge` | planned |
-| Structural | [Composite](docs/DESIGN_PATTERNS_GUIDE.md#53-composite) | ⭐⭐ | P C N | `composite` | planned |
-| Structural | [Decorator](docs/DESIGN_PATTERNS_GUIDE.md#54-decorator) | ⭐⭐⭐ | P C N | `decorator` | planned |
-| Structural | [Facade](docs/DESIGN_PATTERNS_GUIDE.md#55-facade) | ⭐⭐⭐ | P C N | `facade` | planned |
-| Structural | [Flyweight](docs/DESIGN_PATTERNS_GUIDE.md#56-flyweight) | 🕰 | C N | `flyweight` | planned |
-| Structural | [Proxy](docs/DESIGN_PATTERNS_GUIDE.md#57-proxy) | ⭐⭐ | P C N | `proxy` | planned |
+| Structural | [Adapter](docs/DESIGN_PATTERNS_GUIDE.md#51-adapter) | ⭐⭐⭐ | P C N | `adapter` | ready |
+| Structural | [Bridge](docs/DESIGN_PATTERNS_GUIDE.md#52-bridge) | ⭐ | C N | `bridge` | ready |
+| Structural | [Composite](docs/DESIGN_PATTERNS_GUIDE.md#53-composite) | ⭐⭐ | P C N | `composite` | ready |
+| Structural | [Decorator](docs/DESIGN_PATTERNS_GUIDE.md#54-decorator) | ⭐⭐⭐ | P C N | `decorator` | ready |
+| Structural | [Facade](docs/DESIGN_PATTERNS_GUIDE.md#55-facade) | ⭐⭐⭐ | P C N | `facade` | ready |
+| Structural | [Flyweight](docs/DESIGN_PATTERNS_GUIDE.md#56-flyweight) | 🕰 | C N | `flyweight` | ready |
+| Structural | [Proxy](docs/DESIGN_PATTERNS_GUIDE.md#57-proxy) | ⭐⭐ | P C N | `proxy` | ready |
 | Behavioral | [Chain of Responsibility](docs/DESIGN_PATTERNS_GUIDE.md#61-chain-of-responsibility) | ⭐⭐⭐ | P C N | `chain-of-responsibility` | planned |
 | Behavioral | [Command](docs/DESIGN_PATTERNS_GUIDE.md#62-command) | ⭐⭐ | P C N | `command` | planned |
 | Behavioral | [Interpreter](docs/DESIGN_PATTERNS_GUIDE.md#63-interpreter) | 🕰 | C N | `interpreter` | planned |

@@ -1843,7 +1843,7 @@ Section [8.1](#81-decorator-proxy-adapter-facade) compares them side by side.
 
 The shop ships through an external carrier. The carrier gives us an old SDK (Software Development Kit, the library they publish to talk to their service) with one method, and a peculiar format: you send a text payload `"<country>;<units>;<totalCents>"` and receive `"PRICE=4.00;DAYS=2"`. We cannot change their code. Our code wants to ask a simple question in its own words: *"what does shipping this order cost, and how long does it take?"*
 
-The carrier's rule (simulated in [`Adapter/External/`](../src/Patterns.Structural/Adapter/External/), which every level shares because it is "their" code): price `3.00 + 0.50 × units`; `2` days to Spain, `4` anywhere else. A malformed payload throws `FormatException`.
+The carrier's rule (simulated in [`Adapter/External/`](../src/Patterns.Structural/Adapter/External/), which every level shares because it is "their" code): price `3.00 + 0.50 × units`; `2` days to Spain, `4` anywhere else. A malformed payload throws `FormatException`. The simulated client also keeps the `LastPayload` it received, so the tests and the demo can show exactly what was sent.
 
 *Analogy:* a travel plug adapter. Your laptop's plug and the hotel's socket do not fit; the adapter sits between them and changes neither.
 
@@ -1859,16 +1859,17 @@ public sealed class CheckoutSummary(LegacyCarrierClient carrier)
         // PAIN: our code speaks the carrier's private format. The same build-and-parse code lives in
         // OrderTracking too, and both break when the carrier changes its format.
         var cents = (int)(order.Total * 100);
-        var answer = carrier.RequestQuote($"{order.ShippingAddress.Country};{order.Units};{cents}");
+        var answer = carrier.RequestQuote(
+            string.Create(CultureInfo.InvariantCulture, $"{order.ShippingAddress.Country};{order.Units};{cents}"));
         var parts = answer.Split(';');
         var price = decimal.Parse(parts[0]["PRICE=".Length..], CultureInfo.InvariantCulture);
         var days = int.Parse(parts[1]["DAYS=".Length..], CultureInfo.InvariantCulture);
-        return $"Shipping {price:0.00} in {days} days";
+        return string.Create(CultureInfo.InvariantCulture, $"Shipping {price:0.00} in {days} days");
     }
 }
 ```
 
-What hurts: the carrier's format **leaks** into our classes, it is duplicated (`CheckoutSummary` and `OrderTracking` each have a copy), and a test of the checkout needs the carrier's SDK.
+What hurts: the carrier's format **leaks** into our classes, it is duplicated (`CheckoutSummary` and `OrderTracking.DeliveryDays` each have a copy, written slightly differently), and a test of the checkout needs the carrier's SDK.
 
 #### Structure
 
@@ -2196,11 +2197,16 @@ The word "implementation" in the GoF intent does not mean "the class that implem
 // Guide: §5.2
 public sealed class ListLoggerProvider : ILoggerProvider
 {
-    public List<string> Lines { get; } = [];
+    private readonly List<string> _lines = [];
 
-    public ILogger CreateLogger(string categoryName) => new ListLogger(categoryName, Lines);
+    public IReadOnlyList<string> Lines => _lines;
 
-    public void Dispose() { }
+    public ILogger CreateLogger(string categoryName) => new ListLogger(categoryName, _lines);
+
+    public void Dispose()
+    {
+        // Nothing to release: the lines stay readable after the logger factory is disposed.
+    }
 
     private sealed class ListLogger(string category, List<string> lines) : ILogger
     {
@@ -2213,10 +2219,17 @@ public sealed class ListLoggerProvider : ILoggerProvider
     }
 }
 
+// What the checkout logs, through [LoggerMessage] (the repository's logging convention; section 7.7 explains it).
+public static partial class CheckoutLog
+{
+    [LoggerMessage(Level = LogLevel.Information, Message = "Order {OrderNumber} placed")]
+    public static partial void OrderPlaced(ILogger logger, string orderNumber);
+}
+
 var provider = new ListLoggerProvider();
 using var factory = LoggerFactory.Create(logging => logging.AddProvider(provider));
-factory.CreateLogger("Checkout").LogInformation("Order placed");
-// provider.Lines: ["Checkout: Order placed"]
+CheckoutLog.OrderPlaced(factory.CreateLogger("Checkout"), "1a2b3c4d");
+// provider.Lines: ["Checkout: Order 1a2b3c4d placed"]
 ```
 
 The code that logs never learns which providers exist; `LoggerFactory` builds a logger that forwards each call to one logger per provider.
@@ -2301,17 +2314,19 @@ From [`0-Problem/`](../src/Patterns.Structural/Composite/0-Problem/):
 ```csharp
 public sealed class CatalogEntry
 {
-    public Product? Product { get; init; }            // set for a single product…
-    public List<CatalogEntry> Children { get; } = []; // …or children, for a bundle
+    public Product? Product { get; init; }                                    // set for a single product…
+    public IList<CatalogEntry> Children { get; } = new List<CatalogEntry>(); // …or children, for a bundle
 
     public static decimal PriceOf(CatalogEntry entry)
     {
         // PAIN: every operation (price, count, export…) repeats this "is it one or many?" check.
-        if (entry.Product is not null) return entry.Product.Price;
+        if (entry.Product is not null) { return entry.Product.Price; }
         decimal total = 0;
-        foreach (var child in entry.Children) total += PriceOf(child);
+        foreach (var child in entry.Children) { total += PriceOf(child); }
         return total;
     }
+
+    // ProductCountOf(entry) repeats the same check: if (entry.Product is not null) return 1; …
 }
 ```
 
@@ -2406,7 +2421,9 @@ public sealed class Bundle(string name) : ICatalogItem
     {
         // A cycle would make Price recurse forever and crash the process (see below).
         if (ReferenceEquals(item, this) || (item is Bundle bundle && bundle.Contains(this)))
+        {
             throw new InvalidOperationException("A bundle cannot contain itself.");
+        }
         _items.Add(item);
     }
 
@@ -2537,8 +2554,8 @@ public sealed class PriceCalculator
     public decimal Price(Order order, bool applyVat, decimal? coupon)
     {
         var price = order.Total;
-        if (applyVat) price = decimal.Round(price * 1.21m, 2, MidpointRounding.AwayFromZero);
-        if (coupon is { } amount) price = Math.Max(0, price - amount);
+        if (applyVat) { price = decimal.Round(price * 1.21m, 2, MidpointRounding.AwayFromZero); }
+        if (coupon is { } amount) { price = Math.Max(0, price - amount); }
         return price;
     }
 }
@@ -2654,16 +2671,20 @@ public sealed class CorrelationIdHandler(Func<string> newId) : DelegatingHandler
     }
 }
 
-// Built by hand: the outermost handler runs first on the way in.
+// Built by hand (CarrierHttpClient.Create): the outermost handler runs first on the way in.
+// StubCarrierHandler is the "network": it answers 200 "ok" and writes the correlation header it received
+// into the same log, so the log shows the request passed the log handler and reached the carrier with the
+// header. (CorrelationIdHandler writes nothing itself: Try it 3 asks what changes if you swap the two.)
 var log = new List<string>();
-var carrier = new StubCarrierHandler(); // the "network": answers 200 "ok" and records the headers it saw
 using var client = new HttpClient(new CorrelationIdHandler(() => "abc-123")
 {
-    InnerHandler = new RequestLogHandler(log) { InnerHandler = carrier },
+    InnerHandler = new RequestLogHandler(log) { InnerHandler = new StubCarrierHandler(log) },
 });
 await client.GetAsync(new Uri("https://carrier.example.com/quote"));
-// log: ["GET https://carrier.example.com/quote"]; carrier saw X-Correlation-Id: abc-123
+// log: ["GET https://carrier.example.com/quote", "carrier saw X-Correlation-Id: abc-123"]
 ```
+
+`RequestLogHandler` and `StubCarrierHandler` take an `ICollection<string>`, not a `List<string>`: public members should not expose `List<T>` (analyzer CA1002), and the handlers only need to add.
 
 In a real application you do not nest them by hand: **`IHttpClientFactory`** builds the chain from the registrations, in the order you add them (the first one added is the outermost):
 
@@ -2787,7 +2808,7 @@ From [`0-Problem/`](../src/Patterns.Structural/Facade/0-Problem/):
 ```csharp
 public sealed class WebCheckout(Inventory inventory, PaymentGateway payments, Shipping shipping, Mailer mailer)
 {
-    public string Place(Order order)
+    public (string PaymentId, string TrackingNumber) Place(Order order)
     {
         // PAIN: the whole sequence is copied in MobileCheckout. A fix here (say, reserving stock
         // before charging) is easy to forget there.
@@ -2795,7 +2816,7 @@ public sealed class WebCheckout(Inventory inventory, PaymentGateway payments, Sh
         var paymentId = payments.Charge(order.Customer, order.Total);
         var tracking = shipping.Schedule(order);
         mailer.Send(order.Customer, $"Order confirmed. Tracking number: {tracking}.");
-        return paymentId;
+        return (paymentId, tracking);
     }
 }
 ```
@@ -2822,14 +2843,10 @@ classDiagram
     class Mailer {
         <<Subsystem>>
     }
-    class WebCheckout {
+    class Client {
         <<Client>>
     }
-    class MobileCheckout {
-        <<Client>>
-    }
-    WebCheckout --> CheckoutFacade
-    MobileCheckout --> CheckoutFacade
+    Client --> CheckoutFacade
     CheckoutFacade --> Inventory
     CheckoutFacade --> PaymentGateway
     CheckoutFacade --> Shipping
@@ -2840,7 +2857,7 @@ classDiagram
 |---|---|---|
 | Facade | `CheckoutFacade` | Knows which subsystems to call and in what order; offers one method. |
 | Subsystem | `Inventory`, `PaymentGateway`, `Shipping`, `Mailer` | Do the real work; they do not know the facade exists. |
-| Client | web and mobile checkouts | Call the facade only. |
+| Client | any checkout (web, mobile, the demo) | Calls the facade only. |
 
 The subsystems stay public: a client that needs something special can still use them directly. A facade **simplifies**; it does not hide by force.
 
@@ -2904,18 +2921,20 @@ public static class InvoiceFile
         return path;
     }
 
-    // What the facade does for you, step by step: three objects and their disposal.
+    // What the facade does for you, step by step: a stream, an encoding, a writer, and their disposal.
     public static string SaveTheLongWay(string path, string invoice)
     {
         using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
-        using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        using var writer = new StreamWriter(stream, Utf8NoBom); // UTF-8 without a byte order mark (BOM), like File.WriteAllText
         writer.Write(invoice);
         return path;
     }
+
+    // ReadSimple (File.ReadAllText) and ReadTheLongWay (FileStream + StreamReader) do the same for reading.
 }
 ```
 
-Both write the same bytes (the test reads them back with `File.ReadAllText` and with a `StreamReader`); `File` just hides the stream, the encoder and the disposal. The long way is still available when you need control (append, share, buffer size).
+Both write the same bytes (the test compares them, and reads each file back the other way); `File` just hides the stream, the encoder and the disposal. The long way is still available when you need control (append, share, buffer size).
 
 **`WebApplication`** is a facade on a large scale: one object in front of the host, the server, the configuration, the logging, the DI container and the middleware pipeline. `app.MapGet("/", …)` and `app.Run()` hide dozens of objects.
 
@@ -3082,9 +3101,11 @@ public sealed class CategoryInfoFactory
 
     public CategoryInfo Get(string name)
     {
-        if (_cache.TryGetValue(name, out var shared)) return shared;
+        if (_cache.TryGetValue(name, out var shared)) { return shared; }
         if (!Known.TryGetValue(name, out var data))
-            throw new ArgumentException($"Unknown category '{name}'.", nameof(name));
+        {
+            throw new ArgumentException($"Unknown category '{name}'."); // "Unknown category 'Toys'."
+        }
 
         Created++;
         return _cache[name] = new CategoryInfo(CanonicalNames[name], data.Icon, data.VatRate);
@@ -3100,6 +3121,8 @@ public sealed record CatalogEntry(string Sku, decimal Price, CategoryInfo Catego
 #### In .NET
 
 **String interning** ([`2-DotNet/`](../src/Patterns.Structural/Flyweight/2-DotNet/)) is the runtime's own flyweight. The runtime keeps an **intern pool**: a table with one shared instance per distinct string value. Every string *literal* in your code is interned automatically, so `"BOOK-001"` written twice is one object. Strings built at run time are not:
+
+The code wraps both calls in `SkuText.Build` and `SkuText.BuildInterned`:
 
 ```csharp
 // Guide: §5.6
@@ -3194,7 +3217,7 @@ Two situations in the shop, both about controlling access to an object:
 1. **Product images are expensive to load** (from disk or a remote store). A product page lists many products, but the visitor looks at only a few images. Loading all of them up front is waste.
 2. **Only administrators can change prices.** The price editor itself should not be full of permission checks.
 
-Both levels use the same shared pieces: an `ImageStore` whose `Read(fileName)` returns 1024 bytes and counts its `Reads`, and a `User(Name, IsAdmin)`.
+Every level uses the same shared pieces, in [`Proxy/Common/`](../src/Patterns.Structural/Proxy/Common/): an `ImageStore` whose `Read(fileName)` returns 1024 bytes and counts its `Reads`, and a `User(Name, IsAdmin)`.
 
 *Analogy:* a building receptionist. Visitors talk to the receptionist, who looks like the way in; the receptionist checks your badge (protection) or calls the person down only when you actually arrive (lazy). The person you visit does not do the checking.
 
@@ -3209,15 +3232,19 @@ public sealed class ProductPage(ImageStore store, IEnumerable<string> imageFiles
     private readonly Dictionary<string, byte[]> _images = imageFiles.ToDictionary(f => f, store.Read);
 }
 
-public sealed class PriceAdminPage(User user, Dictionary<Guid, decimal> prices)
+public sealed class PriceAdminPage(User user)
 {
+    private readonly Dictionary<Guid, decimal> _prices = [];
+
     public void ChangePrice(Product product, decimal newPrice)
     {
         // PAIN: the same check is copied into every method that changes something; one forgotten
         // copy is a security hole.
-        if (!user.IsAdmin) throw new UnauthorizedAccessException("Only administrators can change prices.");
-        prices[product.Id] = newPrice;
+        if (!user.IsAdmin) { throw new UnauthorizedAccessException("Only administrators can change prices."); }
+        _prices[product.Id] = newPrice;
     }
+
+    // ResetPrice(product) starts with the same if: the second copy.
 }
 ```
 
@@ -3296,7 +3323,7 @@ public sealed class AdminOnlyPriceEditor(IPriceEditor inner, User user) : IPrice
 {
     public void ChangePrice(Product product, decimal newPrice)
     {
-        if (!user.IsAdmin) throw new UnauthorizedAccessException("Only administrators can change prices.");
+        if (!user.IsAdmin) { throw new UnauthorizedAccessException("Only administrators can change prices."); }
         inner.ChangePrice(product, newPrice);
     }
 }
@@ -3310,6 +3337,8 @@ This hand-written lazy proxy is **not thread-safe**: two threads could both read
 
 **`Lazy<T>`** is a ready-made virtual proxy for a value ([`2-DotNet/`](../src/Patterns.Structural/Proxy/2-DotNet/)): it runs the factory on first `.Value`, once, thread-safely.
 
+In the code, `ProductImage` holds one:
+
 ```csharp
 var image = new Lazy<byte[]>(() => store.Read("book.jpg")); // nothing read yet
 var bytes = image.Value;                                    // read now…
@@ -3319,33 +3348,38 @@ var again = image.Value;                                    // …and not again:
 **`DispatchProxy`** creates a proxy for **any interface** at run time: you write one `Invoke` method that receives every call, and the runtime generates a class implementing the interface that forwards to it. That makes a logging proxy for any service in a few lines:
 
 ```csharp
-// Role: Proxy (generated) — logs every call to any interface, then forwards it to the real object.
 // Guide: §5.7
-// Not sealed: DispatchProxy generates a class at run time that derives from this one.
-public class LoggingProxy<T> : DispatchProxy where T : class
+// On a non-generic class, so callers write LoggingProxy.Create<IPriceEditor>(…) (analyzer CA1000: no static
+// members on generic types).
+public static class LoggingProxy
 {
-    private T _target = default!;
-    private List<string> _log = default!;
-
-    public static T Create(T target, List<string> log)
+    public static T Create<T>(T target, ICollection<string> log) where T : class
     {
-        var proxy = Create<T, LoggingProxy<T>>(); // the runtime builds a class implementing T
-        var self = (LoggingProxy<T>)(object)proxy;
-        self._target = target;
-        self._log = log;
+        var proxy = DispatchProxy.Create<T, LoggingDispatchProxy<T>>(); // the runtime builds a class implementing T
+        var self = (LoggingDispatchProxy<T>)(object)proxy;
+        self.Target = target;
+        self.Log = log;
         return proxy;
-    }
-
-    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-    {
-        _log.Add($"{targetMethod!.Name} called");
-        // Reflection: slower than a direct call. DoNotWrapExceptions lets the target's own exception
-        // (say, UnauthorizedAccessException) reach the caller instead of a TargetInvocationException.
-        return targetMethod.Invoke(_target, BindingFlags.DoNotWrapExceptions, binder: null, args, culture: null);
     }
 }
 
-var editor = LoggingProxy<IPriceEditor>.Create(new PriceEditor(), log);
+// Role: Proxy (generated) — logs every call to any interface, then forwards it to the real object.
+// Not sealed: DispatchProxy generates a class at run time that derives from this one.
+public class LoggingDispatchProxy<T> : DispatchProxy where T : class
+{
+    internal T Target { get; set; } = default!;
+    internal ICollection<string> Log { get; set; } = default!;
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+    {
+        Log.Add($"{targetMethod!.Name} called");
+        // Reflection: slower than a direct call. DoNotWrapExceptions lets the target's own exception
+        // (say, UnauthorizedAccessException) reach the caller instead of a TargetInvocationException.
+        return targetMethod.Invoke(Target, BindingFlags.DoNotWrapExceptions, binder: null, args, culture: null);
+    }
+}
+
+var editor = LoggingProxy.Create<IPriceEditor>(new PriceEditor(), log);
 editor.ChangePrice(SampleData.Book, 11.00m); // log: ["ChangePrice called"]
 ```
 
@@ -3392,8 +3426,8 @@ dotnet run --project src/Patterns.Runner -- proxy
 ```
 
 1. Build a page with ten `LazyImageProxy` images, show only two, and check `store.Reads`.
-2. Wrap `AdminOnlyPriceEditor` in a `LoggingProxy<IPriceEditor>`, call it as a non-admin, and look at the log: is the failed call logged? Swap the order and try again.
-3. Try `LoggingProxy<PriceEditor>.Create(...)` with the class instead of the interface and read the exception.
+2. Wrap `AdminOnlyPriceEditor` in a `LoggingProxy.Create<IPriceEditor>(…)`, call it as a non-admin, and look at the log: is the failed call logged? Swap the order and try again.
+3. Try `LoggingProxy.Create<PriceEditor>(...)` with the class instead of the interface and read the exception.
 
 #### Interview questions
 
@@ -8011,6 +8045,7 @@ Alphabetical. Each term links to the section that explains it.
 - **Association** — A class keeps a reference to another and uses it over time (a field). → [3.4](#34-how-to-read-the-diagrams)
 - **`BackgroundService`** — Base class for long-running work in a .NET host; you implement `ExecuteAsync`. → [6.10](#610-template-method)
 - **BCL (Base Class Library)** — The standard library that ships with .NET (`System.*`). → [5.6](#56-flyweight)
+- **BOM (byte order mark)** — Optional bytes at the start of a text file that announce its encoding; `File.WriteAllText` writes UTF-8 without one. → [5.5](#55-facade)
 - **Builder (fluent)** — An object that assembles another step by step, each step returning the builder so calls chain. → [4.4](#44-builder)
 - **Captive dependency** — A longer-lived service holding a shorter-lived one (a singleton holding a scoped `DbContext`). → [7.1](#71-dependency-injection)
 - **Central package management** — Declaring every NuGet package version once in `Directory.Packages.props`. → [2.2](#22-root-build-files)

@@ -13,6 +13,13 @@ public sealed class CatalogTests
         ("abstract-factory", Relevance.Niche),
         ("builder", Relevance.Essential),
         ("prototype", Relevance.Historical),
+        ("adapter", Relevance.Essential),
+        ("bridge", Relevance.Niche),
+        ("composite", Relevance.Useful),
+        ("decorator", Relevance.Essential),
+        ("facade", Relevance.Essential),
+        ("flyweight", Relevance.Historical),
+        ("proxy", Relevance.Useful),
     ];
 
     [Fact]

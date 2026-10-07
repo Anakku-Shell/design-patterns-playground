@@ -1,3 +1,4 @@
+using System.Globalization;
 using Patterns.Creational.Builder.Classic;
 using Patterns.Creational.Builder.DotNet;
 using Patterns.Shop;
@@ -94,6 +95,16 @@ public sealed class BuilderTests
     }
 
     [Fact]
+    public void Receipt_IgnoresTheCurrentCulture()
+    {
+        var order = AnOrder.WithLines((SampleData.Book, 2)).Build();
+
+        var receipt = WithDecimalComma(() => ReceiptPrinter.Print(order));
+
+        Assert.Contains("2 x Clean Code @ 12.50 = 25.00", receipt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TrackingLink_HasPathAndQuery()
     {
         var id = new Guid("0a000000-0000-0000-0000-000000000001");
@@ -109,5 +120,25 @@ public sealed class BuilderTests
         Assert.Equal(SampleData.Ana, order.Customer);
         Assert.Equal(SampleData.Lisbon, order.ShippingAddress);
         Assert.Equal(50.00m, order.Total);
+    }
+
+    // The repository runs with invariant globalization, so the current culture is always invariant and a
+    // missing CultureInfo.InvariantCulture would go unnoticed. A cloned culture with a decimal comma (like
+    // es-ES) still works in that mode and makes the mistake visible.
+    private static T WithDecimalComma<T>(Func<T> action)
+    {
+        var previous = CultureInfo.CurrentCulture;
+        var comma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        comma.NumberFormat.NumberDecimalSeparator = ",";
+        comma.NumberFormat.NumberGroupSeparator = ".";
+        CultureInfo.CurrentCulture = comma;
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 }
