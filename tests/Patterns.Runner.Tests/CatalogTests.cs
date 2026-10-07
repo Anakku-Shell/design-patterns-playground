@@ -31,6 +31,14 @@ public sealed class CatalogTests
         ("strategy", Relevance.Essential),
         ("template-method", Relevance.Useful),
         ("visitor", Relevance.Niche),
+        ("dependency-injection", Relevance.Essential),
+        ("options", Relevance.Essential),
+        ("repository", Relevance.Useful),
+        ("unit-of-work", Relevance.Useful),
+        ("specification", Relevance.Useful),
+        ("result", Relevance.Useful),
+        ("null-object", Relevance.Useful),
+        ("object-pool", Relevance.Niche),
     ];
 
     [Fact]

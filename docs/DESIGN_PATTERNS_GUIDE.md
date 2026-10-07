@@ -239,7 +239,7 @@ Five files at the root apply to every project, so each is written once. MSBuild,
 
 **`.gitattributes`** — stores every text file with LF line endings, on every operating system. `.editorconfig` asks for LF and `dotnet format --verify-no-changes` checks it, so a Windows checkout that converted files to CRLF would otherwise fail the format check.
 
-A test project with no tests yet would make `dotnet test` fail (Microsoft.Testing.Platform exits with code 8, "zero tests ran"). Until a category gets its first tests, its test project ignores that code through `<TestingPlatformCommandLineArguments>--ignore-exit-code 8</TestingPlatformCommandLineArguments>`; the phase that adds the tests removes the line.
+A test project with no tests yet would make `dotnet test` fail (Microsoft.Testing.Platform exits with code 8, "zero tests ran"). While the repository was being built, each category's test project ignored that code through `<TestingPlatformCommandLineArguments>--ignore-exit-code 8</TestingPlatformCommandLineArguments>` until its first tests arrived; every category has tests now, so no project carries the line. A new, still empty test project would need it.
 
 ### 2.3 The folder of a pattern
 
@@ -6284,7 +6284,8 @@ public sealed class CheckoutService
         // PAIN: a real SMTP sender and the real clock, hard-wired. A test sends a real email and gets
         // a different time on every run; nothing can be replaced.
         var sender = new SmtpEmailSender();
-        var text = $"Order {order.Id.ToString()[..8]} confirmed at {DateTime.Now:HH:mm}";
+        var text = string.Create(CultureInfo.InvariantCulture,
+            $"Order {order.Id.ToString()[..8]} confirmed at {DateTime.Now:HH:mm}");
         sender.Send(order.Customer.Email, text);
         return text;
     }
@@ -6294,9 +6295,9 @@ public sealed class CheckoutService
 var sender = ServiceLocator.Get<IEmailSender>(); // PAIN: the dependency is invisible from outside
 ```
 
-What hurts: the dependencies are **hidden** (the constructor says the class needs nothing, which is false), the class decides *which* implementation to use, and tests cannot substitute anything. The test `Problem_HidesItsDependencies` checks that the only constructor has no parameters: there is nothing to inject.
+What hurts: the dependencies are **hidden** (the constructor says the class needs nothing, which is false), the class decides *which* implementation to use, and tests cannot substitute anything. The test `Problem_HidesItsDependencies` checks that the only constructor has no parameters: there is nothing to inject. The `SmtpEmailSender` of the Problem level is simulated (it sends nothing), but the shape is the real one.
 
-The **Service Locator** (b) is often presented as a fix, and it is an **anti-pattern**: the class can be constructed, but it fails at run time if the locator is not configured, and you only learn what it needs by reading every method.
+The **Service Locator** (b) is often presented as a fix, and it is an **anti-pattern**: the class can be constructed, but it fails at run time if the locator is not configured (the test `Problem_Locator_FailsOnlyWhenUsed`: `"No service registered for IEmailSender."`), and you only learn what it needs by reading every method.
 
 #### Structure
 
@@ -6309,7 +6310,7 @@ classDiagram
     }
     class IEmailSender {
         <<Service>>
-        +Send(string to, string text)
+        +Send(string recipient, string text)
     }
     class FakeEmailSender {
         <<ConcreteService>>
@@ -6379,19 +6380,24 @@ public static class CompositionRoot
 // Test:       CompositionRoot.CreateCheckout(new FakeEmailSender(), new FixedTime(10, 30))
 ```
 
+(The Problem level reads local time, `DateTime.Now`; the injected levels print UTC, `clock.GetUtcNow()`, on purpose: a server's local time depends on where it runs. `TimeProvider.GetLocalNow()` is the exact replacement for `DateTime.Now` when local time is what you want.)
+
 That is the whole pattern: **constructor parameters**. A container is optional. Wiring by hand (*pure DI*) is perfectly valid for small programs and makes every dependency visible to the compiler.
 
 #### In .NET
 
-`Microsoft.Extensions.DependencyInjection` is the container every ASP.NET Core and worker application uses ([`2-DotNet/`](../src/Patterns.Modern/DependencyInjection/2-DotNet/)). You **register** what implements what and for how long it lives; the container reads constructors and builds the graph:
+`Microsoft.Extensions.DependencyInjection` is the container every ASP.NET Core and worker application uses ([`2-DotNet/`](../src/Patterns.Modern/DependencyInjection/2-DotNet/)). You **register** what implements what and for how long it lives; the container reads constructors and builds the graph. The registrations live in an extension method, `AddCheckout`, the usual way a feature offers its registrations to `Program.cs`:
 
 ```csharp
-var services = new ServiceCollection();
-services.AddSingleton(TimeProvider.System);
-services.AddScoped<IEmailSender, FakeEmailSender>();
-services.AddTransient<CheckoutService>();
+public static IServiceCollection AddCheckout(this IServiceCollection services, TimeProvider clock)
+{
+    services.AddSingleton(clock);                        // TimeProvider.System in production
+    services.AddScoped<IEmailSender, FakeEmailSender>();
+    services.AddTransient<CheckoutService>();
+    return services;
+}
 
-using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+using var provider = new ServiceCollection().AddCheckout(clock).BuildServiceProvider(new ServiceProviderOptions
 {
     ValidateScopes = true,  // catch scoped services resolved from the root (see captive dependencies)
     ValidateOnBuild = true, // check every registration can be built, now instead of at first use
@@ -6411,7 +6417,7 @@ var checkout = scope.ServiceProvider.GetRequiredService<CheckoutService>();
 
 The tests `Lifetimes` check the three rows: the same singleton across scopes, the same scoped instance within a scope and a different one in another scope, a new transient every time.
 
-**Captive dependency.** A service must not depend on a service with a **shorter** lifetime. A singleton that receives a scoped `DbContext` keeps that one context forever, shared by every request and every thread: data from one user leaks to another and the context breaks under concurrency. `ValidateScopes = true` (on by default in Development in ASP.NET Core) makes the container throw `InvalidOperationException` when a scoped service is resolved from the root, as the test `ResolvingScopedFromRoot_Throws` shows.
+**Captive dependency.** A service must not depend on a service with a **shorter** lifetime. A singleton that receives a scoped `DbContext` keeps that one context forever, shared by every request and every thread: data from one user leaks to another and the context breaks under concurrency. `ValidateScopes = true` (on by default in Development in ASP.NET Core) makes the container throw `InvalidOperationException` when a scoped service is resolved from the root, as the test `ResolvingScopedFromRoot_Throws` shows. With `ValidateOnBuild` as well, a singleton `CheckoutService` that needs the scoped `IEmailSender` is refused when the provider is built, before any request runs (the test `CaptiveDependency_FailsOnBuild`).
 
 **Service Locator in disguise.** Injecting `IServiceProvider` and calling `GetService` inside methods is the Service Locator again. It is acceptable only inside infrastructure that genuinely resolves by run-time information (the mediator of [6.5](#65-mediator), keyed lookups by a user's choice in [6.9](#69-strategy)), never as a shortcut in business classes.
 
@@ -6521,7 +6527,7 @@ classDiagram
         <<Options>>
         +decimal StandardCost
         +decimal FreeShippingThreshold
-        +string[] Countries
+        +IReadOnlyList~string~ Countries
     }
     class IOptions~T~ {
         <<Accessor>>
@@ -6576,7 +6582,7 @@ public sealed class ShippingOptions
 {
     public decimal StandardCost { get; set; }
     public decimal FreeShippingThreshold { get; set; }
-    public string[] Countries { get; set; } = [];
+    public IReadOnlyList<string> Countries { get; set; } = []; // the binder fills read-only list interfaces too
 }
 
 // Reads and validates once, at start-up; after that, everybody gets a typed object.
@@ -6588,12 +6594,13 @@ public static class ShippingOptionsReader
         {
             StandardCost = decimal.Parse(raw["Shipping:StandardCost"], CultureInfo.InvariantCulture),
             FreeShippingThreshold = decimal.Parse(raw["Shipping:FreeShippingThreshold"], CultureInfo.InvariantCulture),
-            Countries = raw.Where(kv => kv.Key.StartsWith("Shipping:Countries:", StringComparison.Ordinal))
-                           .OrderBy(kv => int.Parse(kv.Key["Shipping:Countries:".Length..], CultureInfo.InvariantCulture))
-                           .Select(kv => kv.Value).ToArray(), // in index order, not dictionary order
+            // In index order, by number: as text, "10" sorts before "2".
+            Countries = [.. raw.Where(kv => kv.Key.StartsWith("Shipping:Countries:", StringComparison.Ordinal))
+                               .OrderBy(kv => int.Parse(kv.Key["Shipping:Countries:".Length..], CultureInfo.InvariantCulture))
+                               .Select(kv => kv.Value)],
         };
         if (options.FreeShippingThreshold <= 0) throw new ArgumentException("FreeShippingThreshold must be positive.");
-        if (options.Countries.Length == 0) throw new ArgumentException("At least one shipping country is required.");
+        if (options.Countries.Count == 0) throw new ArgumentException("At least one shipping country is required.");
         return options;
     }
 }
@@ -6606,9 +6613,11 @@ Parsing happens **once**, errors appear **at start-up**, and the rest of the cod
 `Microsoft.Extensions.Options` does the binding, validation and change tracking ([`2-DotNet/`](../src/Patterns.Modern/Options/2-DotNet/)):
 
 ```csharp
+// Inside AddShippingOptions(this IServiceCollection services, IConfiguration configuration):
 services.AddOptions<ShippingOptions>()
     .Bind(configuration.GetSection("Shipping"))
     .Validate(o => o.FreeShippingThreshold > 0, "FreeShippingThreshold must be positive.")
+    .Validate(o => o.Countries.Count > 0, "At least one shipping country is required.")
     .ValidateOnStart(); // with a host: fail at start-up, not at first use
 
 public sealed class ShippingCalculator(IOptions<ShippingOptions> options)
@@ -6618,7 +6627,7 @@ public sealed class ShippingCalculator(IOptions<ShippingOptions> options)
 }
 ```
 
-`ValidateOnStart` is honoured by the generic host (`IHost.StartAsync`); with a bare `ServiceProvider`, as in the tests, validation runs when the options are first read, and an invalid value throws `OptionsValidationException` with your message (test `Invalid_FailsWhenRead`). For attribute-based rules, `ValidateDataAnnotations()` (package `Microsoft.Extensions.Options.DataAnnotations`) or the `[OptionsValidator]` source generator.
+`ValidateOnStart` registers the options with an `IStartupValidator` (.NET 8+), which the generic host calls in `IHost.StartAsync`: a bad setting stops the application before the first request. A bare `ServiceProvider` does not call it by itself, so there validation runs when the options are first read, and an invalid value throws `OptionsValidationException` with your message (test `Invalid_FailsWhenRead`); the test `ValidateOnStart_FailsWithoutReadingTheOptions` calls `IStartupValidator.Validate()` the way the host does. For attribute-based rules, `ValidateDataAnnotations()` (package `Microsoft.Extensions.Options.DataAnnotations`) or the `[OptionsValidator]` source generator.
 
 **Which accessor?**
 
@@ -6705,14 +6714,20 @@ The catalog service needs products: by id, by category, and to add new ones. Whe
 From [`0-Problem/`](../src/Patterns.Modern/Repository/0-Problem/):
 
 ```csharp
-public sealed class CatalogService(List<Product> table)
+public sealed class CatalogService(IList<Product> table) // the list stands in for a database table
 {
     // PAIN: storage details and queries are repeated inside business methods. Moving to a database
     // means rewriting every method that touches the list.
     public IReadOnlyList<Product> Books() =>
-        table.Where(p => p.Category.Name.Equals("Books", StringComparison.OrdinalIgnoreCase)).ToList();
+        [.. table.Where(p => p.Category.Name.Equals("Books", StringComparison.OrdinalIgnoreCase))];
+
+    public IReadOnlyList<Product> InCategory(string category) =>
+        [.. table.Where(p => p.Category.Name.Equals(category, StringComparison.OrdinalIgnoreCase))];
 
     public decimal PriceOf(Guid id) => table.First(p => p.Id == id).Price;
+
+    // PAIN: nothing stops a second product with the same id.
+    public void AddProduct(Product product) => table.Add(product);
 }
 ```
 
@@ -6773,7 +6788,7 @@ public sealed class InMemoryProductRepository : IProductRepository
     public Product? GetById(Guid id) => _products.GetValueOrDefault(id);
 
     public IReadOnlyList<Product> ListByCategory(string category) =>
-        _products.Values.Where(p => p.Category.Name.Equals(category, StringComparison.OrdinalIgnoreCase)).ToList();
+        [.. _products.Values.Where(p => p.Category.Name.Equals(category, StringComparison.OrdinalIgnoreCase))];
 
     public void Add(Product product)
     {
@@ -6783,7 +6798,7 @@ public sealed class InMemoryProductRepository : IProductRepository
 }
 ```
 
-The repository returns **materialised** lists (`IReadOnlyList<T>`), not lazy queries, so callers cannot accidentally run more queries later (section [6.4](#64-iterator)).
+The repository returns **materialised** lists (`IReadOnlyList<T>`), not lazy queries, so callers cannot accidentally run more queries later (section [6.4](#64-iterator)); the test `ListByCategory_ReturnsAMaterialisedList` adds a book after the call, and the list the caller holds does not change. The client, `CatalogService(IProductRepository)`, offers `InCategory` and `PriceOf` and never sees the dictionary.
 
 #### In .NET
 
@@ -6793,15 +6808,18 @@ With Entity Framework Core you already have a repository: **`DbSet<T>` is a repo
 // Guide: §7.3
 public sealed class ProductQueries(IQueryable<Product> products) // a DbSet<Product> in a real app
 {
-    public IReadOnlyList<Product> InCategory(string category) =>
-        products.Where(p => p.Category.Name.ToUpperInvariant() == category.ToUpperInvariant())
-                .ToList();
+    [SuppressMessage("Performance", "CA1862", Justification = "An IQueryable provider translates a case conversion to SQL, not a StringComparison overload.")]
+    public IReadOnlyList<Product> InCategory(string category)
+    {
+        var wanted = category.ToUpperInvariant();
+        return [.. products.Where(p => p.Category.Name.ToUpperInvariant() == wanted)];
+    }
 }
 
 var queries = new ProductQueries(SampleData.Products.AsQueryable());
 ```
 
-(A case conversion instead of `StringComparison`: query providers can translate a conversion to SQL, but not a `StringComparison` overload. Over this in-memory list the code uses `ToUpperInvariant()`, the culture-safe form the analyzers require. Against EF Core you would write `ToUpper()`, which it translates to SQL `UPPER`, with a justified suppression of the culture analyzer, or better, rely on the database collation for case-insensitive comparison.)
+(A case conversion instead of `StringComparison`: query providers can translate a conversion to SQL, but not a `StringComparison` overload. Over this in-memory list the code uses `ToUpperInvariant()`, the culture-safe form the analyzers require, and silences CA1862, the analyzer that suggests the `StringComparison` overload, with that reason. Against EF Core you would write `ToUpper()`, which it translates to SQL `UPPER`, with a justified suppression of the culture analyzer, or better, rely on the database collation for case-insensitive comparison.)
 
 **The debate: a repository over EF Core?**
 
@@ -6890,13 +6908,14 @@ Confirming an order means two changes: **save the order** and **decrease the sto
 From [`0-Problem/`](../src/Patterns.Modern/UnitOfWork/0-Problem/):
 
 ```csharp
-// PAIN: each repository writes immediately. The order is saved, then the stock check fails, and
-// the shop is left with an order but no stock movement: half-done work.
-orderRepository.Save(order);
-stockRepository.Decrease(SampleData.Mug.Id, 1); // throws: the mug is out of stock
+// PAIN: each repository writes immediately. The order is saved and the books are taken, then the mug
+// is out of stock, and the shop is left with half-done work: an order and stock movements for a sale that failed.
+orderRepository.Save(order);                     // order: 2 books and 1 mug
+foreach (var line in order.Lines)
+    stockRepository.Decrease(line.Product.Id, line.Quantity); // books: 20 → 18; mug: throws
 ```
 
-The test `Problem_LeavesHalfDoneWork` shows the order in the store after the failure.
+The test `Problem_LeavesHalfDoneWork` shows the order in the store, and 18 books, after the failure.
 
 #### Structure
 
@@ -6905,7 +6924,7 @@ classDiagram
     class UnitOfWork {
         <<UnitOfWork>>
         -List~Order~ _newOrders
-        -List~StockChange~ _stockChanges
+        -List~(Guid, int)~ _stockChanges
         +RegisterOrder(Order order)
         +DecreaseStock(Guid productId, int units)
         +Commit()
@@ -6913,7 +6932,8 @@ classDiagram
     class InMemoryShop {
         <<Store>>
         +Dictionary Stock
-        +List~Order~ Orders
+        +IReadOnlyList~Order~ Orders
+        +AddOrder(Order order)
     }
     class CheckoutService {
         <<Client>>
@@ -6958,23 +6978,31 @@ public sealed class UnitOfWork(InMemoryShop shop)
     private readonly List<(Guid ProductId, int Units)> _stockChanges = [];
 
     public void RegisterOrder(Order order) => _newOrders.Add(order);
-    public void DecreaseStock(Guid productId, int units) => _stockChanges.Add((productId, units));
+    public void DecreaseStock(Guid productId, int units)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(units); // a negative decrease would add stock
+        _stockChanges.Add((productId, units));
+    }
 
     public void Commit()
     {
-        // 1. Validate everything first…
-        foreach (var (productId, units) in _stockChanges)
-            if (shop.Stock.GetValueOrDefault(productId) < units)
-                throw new InvalidOperationException($"Not enough stock for {productId}.");
+        // 1. Validate everything first, per product: two changes that each fit may not fit together…
+        foreach (var change in _stockChanges.GroupBy(c => c.ProductId))
+            if (!shop.Stock.TryGetValue(change.Key, out var inStock) || inStock < change.Sum(c => c.Units))
+                throw new InvalidOperationException($"Not enough stock for {change.Key}.");
 
         // 2. …then apply everything. Nothing above wrote anything, so a failure leaves the shop untouched.
         foreach (var (productId, units) in _stockChanges) shop.Stock[productId] -= units;
-        shop.Orders.AddRange(_newOrders);
+        foreach (var order in _newOrders) shop.AddOrder(order);
         _newOrders.Clear();
         _stockChanges.Clear();
     }
 }
 ```
+
+"Nothing above wrote anything" holds only if validation checks exactly what applying needs: an unknown product fails validation (`TryGetValue`, not a default of 0 that the indexer would then reject half-way through applying), and zero or negative units are refused when registered (tests `Commit_WithUnknownProduct_AppliesNothing` and `DecreaseStock_RejectsZeroOrNegativeUnits`).
+
+The client, `CheckoutService(InMemoryShop)`, creates one `UnitOfWork` per `Confirm`, registers the order and one stock decrease per line, and commits once. The test `Classic_ChecksTheSumOfChangesToOneProduct` decreases the books by 15 and by 10: each fits the 20 in stock, together they do not, and nothing is applied.
 
 In memory, "validate then apply" is enough. Against a database, the unit of work wraps the writes in a **transaction**: a group of operations the database guarantees to apply completely or not at all.
 
@@ -6996,41 +7024,55 @@ That is why `DbContext` is registered as **scoped** (one per request: one unit o
 // Guide: §7.4
 public sealed class TransactionalShop(InMemoryShop shop) : IEnlistmentNotification
 {
-    private readonly List<(Guid ProductId, int Units)> _pending = [];
+    private readonly List<Order> _newOrders = [];
+    private readonly List<(Guid ProductId, int Units)> _stockChanges = [];
+    private Transaction? _enlistedIn; // the one transaction whose changes this object holds
 
-    public void DecreaseStock(Guid productId, int units)
-    {
-        var transaction = Transaction.Current
-            ?? throw new InvalidOperationException("DecreaseStock must run inside a TransactionScope.");
-        if (_pending.Count == 0) transaction.EnlistVolatile(this, EnlistmentOptions.None);
-        _pending.Add((productId, units));
-    }
+    public void RegisterOrder(Order order) { EnlistOnce(); _newOrders.Add(order); }
+    public void DecreaseStock(Guid productId, int units) { /* units > 0, as in Classic */ EnlistOnce(); _stockChanges.Add((productId, units)); }
 
     public void Prepare(PreparingEnlistment enlistment) // phase 1: can we commit?
     {
-        if (_pending.All(c => shop.Stock.GetValueOrDefault(c.ProductId) >= c.Units)) enlistment.Prepared();
-        else enlistment.ForceRollback();
+        var enough = _stockChanges.GroupBy(c => c.ProductId)
+            .All(change => shop.Stock.TryGetValue(change.Key, out var inStock) && inStock >= change.Sum(c => c.Units));
+        if (enough) enlistment.Prepared();
+        else { Discard(); enlistment.ForceRollback(); }
     }
 
     public void Commit(Enlistment enlistment)            // phase 2: apply
     {
-        foreach (var (id, units) in _pending) shop.Stock[id] -= units;
-        _pending.Clear();
+        foreach (var (id, units) in _stockChanges) shop.Stock[id] -= units;
+        foreach (var order in _newOrders) shop.AddOrder(order);
+        Discard();
         enlistment.Done();
     }
 
-    public void Rollback(Enlistment enlistment) { _pending.Clear(); enlistment.Done(); }
-    public void InDoubt(Enlistment enlistment) => enlistment.Done();
+    public void Rollback(Enlistment enlistment) { Discard(); enlistment.Done(); }
+    public void InDoubt(Enlistment enlistment) { Discard(); enlistment.Done(); }
+
+    private void EnlistOnce()
+    {
+        var transaction = Transaction.Current
+            ?? throw new InvalidOperationException("TransactionalShop must be used inside a TransactionScope.");
+        if (_enlistedIn is null) { transaction.EnlistVolatile(this, EnlistmentOptions.None); _enlistedIn = transaction; }
+        else if (!_enlistedIn.Equals(transaction))
+            throw new InvalidOperationException("TransactionalShop already holds changes of another transaction.");
+    }
+
+    private void Discard() { _newOrders.Clear(); _stockChanges.Clear(); _enlistedIn = null; }
 }
 
 var txShop = new TransactionalShop(shop);
 using (var scope = new TransactionScope())
 {
+    txShop.RegisterOrder(order);
     txShop.DecreaseStock(SampleData.Book.Id, 2);
     scope.Complete(); // without this line, disposing the scope rolls everything back
 }
 // If Prepare calls ForceRollback (not enough stock), disposing the scope throws TransactionAbortedException.
 ```
+
+The object holds the changes of **one transaction at a time**: a nested `TransactionScope(TransactionScopeOption.RequiresNew)` that used it while the outer one had pending changes would otherwise lose its own, so it throws (test `DotNet_ChangesInAnotherTransaction_Throw`). `Rollback` and `InDoubt` discard the pending changes, so the same object works in the next scope (`DotNet_ScopeWithoutComplete_RollsBack` reuses it).
 
 The two methods `Prepare` and `Commit` are the **two-phase commit** protocol: every resource first says whether it *can* commit, and only if all agree does anyone commit. Notes: with `async` code, create the scope with `TransactionScopeAsyncFlowOption.Enabled` or the ambient transaction does not flow across `await`; a scope that spans two databases needs a distributed transaction, which on modern .NET is supported only on Windows and must be enabled explicitly.
 
@@ -7114,13 +7156,15 @@ From [`0-Problem/`](../src/Patterns.Modern/Specification/0-Problem/):
 ```csharp
 public sealed class ProductFinder(IReadOnlyList<Product> products)
 {
-    // PAIN: one method per combination. Three rules already allow dozens of combinations, and each
-    // method repeats the definition of "in stock".
+    // PAIN: one method per combination. Three rules already allow dozens of combinations, and each method
+    // repeats the definition of "in stock" or "in a category"; next week marketing asks for another one.
     public IReadOnlyList<Product> FindInStockBooks() =>
-        products.Where(p => p.Stock > 0 && p.Category.Name.Equals("Books", StringComparison.OrdinalIgnoreCase)).ToList();
+        [.. products.Where(p => p.Stock > 0 && p.Category.Name.Equals("Books", StringComparison.OrdinalIgnoreCase))];
 
     public IReadOnlyList<Product> FindCheapInStock(decimal limit) =>
-        products.Where(p => p.Stock > 0 && p.Price < limit).ToList();
+        [.. products.Where(p => p.Stock > 0 && p.Price < limit)];
+
+    // …and FindOutOfStock(), FindBooksOrHome(), with the next combination already on its way.
 }
 ```
 
@@ -7215,7 +7259,12 @@ public abstract class ExpressionSpecification<T>
     public abstract Expression<Func<T, bool>> ToExpression();
 
     public ExpressionSpecification<T> And(ExpressionSpecification<T> other) =>
-        new AndExpressionSpecification<T>(this, other);
+        new CombinedSpecification<T>(this, other, Expression.AndAlso);
+
+    public ExpressionSpecification<T> Or(ExpressionSpecification<T> other) =>
+        new CombinedSpecification<T>(this, other, Expression.OrElse);
+
+    public ExpressionSpecification<T> Not() => new NotExpressionSpecification<T>(this);
 }
 
 public sealed class CheaperThanExpression(decimal limit) : ExpressionSpecification<Product>
@@ -7228,7 +7277,19 @@ var cheapInStock = new InStockExpression().And(new CheaperThanExpression(20m));
 var result = products.AsQueryable().Where(cheapInStock.ToExpression()).ToList();
 ```
 
-Combining two expressions is the subtle part. Each lambda has its **own parameter** (`p` in one, another `p` in the other), and `Expression.AndAlso(left.Body, right.Body)` would mix two different parameters in one lambda. Building it works; it fails later, when you `Compile()` it ("variable 'p' … referenced from scope '', but it is not defined") or when EF Core tries to translate it. The `And` combinator uses a tiny `ExpressionVisitor` ([6.11](#611-visitor)) that **replaces** the right lambda's parameter with the left one's, then joins the bodies with `AndAlso` under a single parameter.
+Combining two expressions is the subtle part. Each lambda has its **own parameter** (`p` in one, another `p` in the other), and `Expression.AndAlso(left.Body, right.Body)` would mix two different parameters in one lambda. Building it works; it fails later, when you `Compile()` it ("variable 'p' … referenced from scope '', but it is not defined") or when EF Core tries to translate it. `And` and `Or` build a `CombinedSpecification<T>` that uses a tiny `ExpressionVisitor` ([6.11](#611-visitor)), `ParameterReplacer`, to **replace** the right lambda's parameter with the left one's, then joins the bodies with `AndAlso` or `OrElse` under a single parameter:
+
+```csharp
+var rightBody = new ParameterReplacer(rightLambda.Parameters[0], leftLambda.Parameters[0]).Visit(rightLambda.Body);
+return Expression.Lambda<Func<T, bool>>(join(leftLambda.Body, rightBody), leftLambda.Parameters);
+
+internal sealed class ParameterReplacer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
+{
+    protected override Expression VisitParameter(ParameterExpression node) => node == from ? to : node;
+}
+```
+
+The test `JoiningBodies_WithoutReplacingTheParameter_FailsToCompile` builds the naive version and watches `Compile()` throw; `DotNet_CombinedExpression_HasOneParameter` checks the real one. `InCategoryExpression` compares with a case conversion, for the reason given in [7.3](#73-repository).
 
 #### In the ecosystem
 
@@ -7335,30 +7396,35 @@ classDiagram
         +bool IsSuccess
         +T Value
         +BusinessError Error
-        +Success(T value)$ Result~T~
-        +Failure(BusinessError error)$ Result~T~
         +Map(Func mapper) Result
         +Bind(Func next) Result
         +Match(Func onSuccess, Func onFailure) TOut
+    }
+    class Result {
+        <<Factory>>
+        +Success(T value)$ Result~T~
+        +Failure(BusinessError error)$ Result~T~
     }
     class BusinessError {
         +string Code
         +string Message
     }
     class StockService {
-        +Reserve(Product product, int quantity) Result~Reservation~
+        +Reserve(Product product, int quantity)$ Result~Reservation~
     }
     Result~T~ --> BusinessError
+    Result ..> Result~T~ : creates
     StockService ..> Result~T~ : returns
 ```
 
 | Role | Our type | Responsibility |
 |---|---|---|
 | Result | `Result<T>` | Holds either a value or an error, never both. Reading the wrong one throws. |
+| Factory | `Result` (static, non-generic) | `Result.Success(value)` and `Result.Failure<T>(error)` create results. |
 | Error | `BusinessError(Code, Message)` | A machine-readable code and a human message. |
 | Operation | `StockService.Reserve` | Its return type says it can fail. |
 
-(The error type is `BusinessError`, not `Error`: `Error` is a Visual Basic keyword, which analyzer CA1716 rejects as a type name.)
+(The error type is `BusinessError`, not `Error`: `Error` is a Visual Basic keyword, which analyzer CA1716 rejects as a type name. The factory methods live in a separate non-generic `Result` class because CA1000 rejects static members on a generic type: they are awkward to call, `Result<Reservation>.Success(…)`, while `Result.Success(reservation)` infers `T`. One wrinkle of this repository's layout: the folder's namespace is also called `Result` (`Patterns.Modern.Result`), so code outside `…Result.Classic` writes `Classic.Result.Success(…)`.)
 
 #### How it runs
 
@@ -7377,6 +7443,12 @@ sequenceDiagram
 ```csharp
 public sealed record BusinessError(string Code, string Message);
 
+public static class Result
+{
+    public static Result<T> Success<T>(T value) => new(value, null);
+    public static Result<T> Failure<T>(BusinessError error) => new(default!, error);
+}
+
 // Role: Result — a success with a value, or a failure with an error.
 // Guide: §7.6
 public readonly struct Result<T>
@@ -7384,10 +7456,7 @@ public readonly struct Result<T>
     private readonly T _value;
     private readonly BusinessError? _error;
 
-    private Result(T value, BusinessError? error) => (_value, _error) = (value, error);
-
-    public static Result<T> Success(T value) => new(value, null);
-    public static Result<T> Failure(BusinessError error) => new(default!, error);
+    internal Result(T value, BusinessError? error) => (_value, _error) = (value, error);
 
     public bool IsSuccess => _error is null;
     public T Value => IsSuccess ? _value : throw new InvalidOperationException("A failed result has no value.");
@@ -7395,28 +7464,29 @@ public readonly struct Result<T>
 
     // Transform the value if there is one; pass the error through untouched.
     public Result<TOut> Map<TOut>(Func<T, TOut> mapper) =>
-        IsSuccess ? Result<TOut>.Success(mapper(_value)) : Result<TOut>.Failure(_error!);
+        IsSuccess ? Result.Success(mapper(_value)) : Result.Failure<TOut>(_error!);
 
     // Chain another operation that can fail; the first failure stops the chain.
     public Result<TOut> Bind<TOut>(Func<T, Result<TOut>> next) =>
-        IsSuccess ? next(_value) : Result<TOut>.Failure(_error!);
+        IsSuccess ? next(_value) : Result.Failure<TOut>(_error!);
 
     public TOut Match<TOut>(Func<T, TOut> onSuccess, Func<BusinessError, TOut> onFailure) =>
         IsSuccess ? onSuccess(_value) : onFailure(_error!);
 }
 
-public Result<Reservation> Reserve(Product product, int quantity) =>
-    quantity < 1 ? Result<Reservation>.Failure(new("quantity.invalid", "Quantity must be at least 1."))
+// In the static class StockService (it keeps no state, so CA1822 asks for static, like int.TryParse):
+public static Result<Reservation> Reserve(Product product, int quantity) =>
+    quantity < 1 ? Result.Failure<Reservation>(new("quantity.invalid", "Quantity must be at least 1."))
     : product.Stock < quantity
-        ? Result<Reservation>.Failure(new("stock.insufficient", $"Only {product.Stock} left of {product.Name}."))
-        : Result<Reservation>.Success(new Reservation(product.Id, quantity));
+        ? Result.Failure<Reservation>(new("stock.insufficient", $"Only {product.Stock} left of {product.Name}."))
+        : Result.Success(new Reservation(product.Id, quantity));
 
-var message = stock.Reserve(SampleData.Book, 21).Match(
+var message = StockService.Reserve(SampleData.Book, 21).Match(
     onSuccess: r => $"Reserved {r.Quantity}",
     onFailure: e => e.Message); // "Only 20 left of Clean Code."
 ```
 
-One trap of making `Result<T>` a `struct`: `default(Result<T>)` has no error, so it looks like a success with a default value. Never create one with `default` or `new()`, only through `Success` and `Failure`.
+One trap of making `Result<T>` a `struct`: `default(Result<T>)` has no error, so it looks like a success with a default value. Never create one with `default` or `new()`, only through `Result.Success` and `Result.Failure`. The compiler cannot stop you: every struct has `default` and a public parameterless `new()`, and making the two-argument constructor `internal` hides only that one. If the trap matters in your code, store a `bool _isSuccess` field instead of deriving success from the missing error: then `default` is a failure, which is the safer mistake.
 
 The signature now says the operation can fail, the caller handles both outcomes with ordinary code, and `Bind` chains several steps that stop at the first failure (test `Bind_StopsAtFirstFailure`).
 
@@ -7436,13 +7506,13 @@ The BCL's own result pattern is **`TryXxx`**: `int.TryParse`, `Dictionary.TryGet
 
 ```csharp
 // Guide: §7.6
-public bool TryReserve(Product product, int quantity, [NotNullWhen(true)] out Reservation? reservation)
+public static bool TryReserve(Product product, int quantity, [NotNullWhen(true)] out Reservation? reservation)
 {
     reservation = quantity >= 1 && product.Stock >= quantity ? new Reservation(product.Id, quantity) : null;
     return reservation is not null;
 }
 
-if (stock.TryReserve(SampleData.Book, 2, out var reservation))
+if (StockService.TryReserve(SampleData.Book, 2, out var reservation))
     Confirm(reservation); // the compiler knows reservation is not null here
 ```
 
@@ -7532,16 +7602,19 @@ Examples: 100.00 with no discount stays 100.00; with 10 % off it is 90.00. A reg
 From [`0-Problem/`](../src/Patterns.Modern/NullObject/0-Problem/):
 
 ```csharp
-public sealed class PriceService(IDiscount? discount, ILogger? logger)
+public sealed partial class PriceService(IDiscount? discount, ILogger? logger)
 {
     public decimal PriceOf(decimal amount)
     {
         // PAIN: a null check at every use. Forget one and it is a NullReferenceException.
         var price = discount is not null ? discount.Apply(amount) : amount;
-        if (logger is not null) logger.LogInformation("Priced {Amount} at {Price}", amount, price);
+        if (logger is not null) LogPriced(logger, amount, price); // a [LoggerMessage] method, as in the .NET level
         return price;
     }
 }
+
+// PAIN: every place that shows the customer's name repeats this branch.
+public static string GreetingFor(Customer customer) => customer.IsGuest ? "Hello, guest" : $"Hello, {customer.Name}";
 ```
 
 Nullable reference types (section [2.2](#22-root-build-files)) make the compiler warn about forgotten checks, which helps; Null Object removes the checks altogether.
@@ -7608,8 +7681,9 @@ public sealed class PriceService(IDiscount discount)
     public decimal PriceOf(decimal amount) => discount.Apply(amount);
 }
 
-// The same idea for customers: the greeting has no "if guest" branch.
-public string GreetingFor(ICustomerProfile profile) => $"Hello, {profile.DisplayName}"; // GuestCustomer.DisplayName == "guest"
+// The same idea for customers: CustomerProfiles.For(customer) decides once (GuestCustomer.Instance or a
+// RegisteredCustomer), and the greeting has no "if guest" branch.
+public static string GreetingFor(ICustomerProfile profile) => $"Hello, {profile.DisplayName}"; // GuestCustomer.DisplayName == "guest"
 ```
 
 `new PriceService(NoDiscount.Instance).PriceOf(100.00m)` is 100.00; with `new PercentageDiscount(10)` it is 90.00. The decision "is there a discount?" is made **once**, where the service is created, not at every use.
@@ -7770,9 +7844,16 @@ sequenceDiagram
 ```csharp
 // Role: ObjectPool — lends StringBuilders and takes them back, keeping a bounded number.
 // Guide: §7.8
-public sealed class InvoiceBufferPool(int maxRetained)
+public sealed class InvoiceBufferPool
 {
     private readonly Stack<StringBuilder> _free = new();
+    private readonly int _maxRetained;
+
+    public InvoiceBufferPool(int maxRetained)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxRetained);
+        _maxRetained = maxRetained;
+    }
 
     public int Created { get; private set; }
 
@@ -7786,14 +7867,16 @@ public sealed class InvoiceBufferPool(int maxRetained)
     public void Return(StringBuilder builder)
     {
         builder.Clear(); // the next user must not see the previous invoice
-        if (_free.Count < maxRetained) _free.Push(builder); // full pool: let the GC have it
+        if (_free.Count < _maxRetained) _free.Push(builder); // full pool: let the GC have it
     }
 }
 
 var builder = pool.Rent();
-try { /* render the invoice */ }
+try { /* render the invoice */ return builder.ToString(); } // copy the text out before the builder goes back
 finally { pool.Return(builder); }
 ```
+
+The client is `InvoiceRenderer(InvoiceBufferPool pool)`, whose `Render(order)` writes `"Invoice 1a2b3c4d"`, one line per order line (`"Clean Code x2 25.00"`) and the total. The demo renders 1,000 invoices and the pool creates **one** builder.
 
 Three rules make a pool correct: **reset** objects when they come back (or the next user sees old data), **bound** the pool (or it becomes a memory leak), and **never use an object after returning it** (someone else may have it now). This hand-written pool is not thread-safe; the framework ones are.
 
@@ -7817,7 +7900,7 @@ try
 finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); } // clear: invoices contain personal data
 ```
 
-`Rent(100)` returns an array of **at least** 100 elements, usually rounded up to a power of two (128). The test `ArrayPool_MayReturnALargerArray` checks `Length >= 100`. Always keep track of the length you asked for or wrote; `buffer.Length` includes leftovers from previous users. Pass `clearArray: true` when the data is sensitive.
+`Rent(100)` returns an array of **at least** 100 elements, usually rounded up to a power of two (128). The test `ArrayPool_MayReturnALargerArray` checks `Length >= 100`. In the code, `InvoiceRenderer` takes an `ObjectPool<StringBuilder>` (same rent/use/return shape as the Classic level), and `InvoiceEncoder.ToUtf8(text)` rents `Encoding.UTF8.GetMaxByteCount(text.Length)` bytes and copies out only the `written` ones (test `DotNet_EncodedInvoice_HasOnlyTheBytesWritten`). Always keep track of the length you asked for or wrote; `buffer.Length` includes leftovers from previous users. Pass `clearArray: true` when the data is sensitive.
 
 **When pooling pays off: measure first.** Allocating small objects in .NET is very cheap, and the GC is designed for short-lived objects. Pooling adds complexity and bugs (use after return, stale data). It pays off for **large** or **expensive-to-create** objects on **hot paths** (thousands of times per second), and you should prove it with a benchmark (BenchmarkDotNet, MIT, is the standard tool) and memory metrics before and after. Database connections are pooled for you by ADO.NET providers; `HttpClient` handlers by `IHttpClientFactory`; `DbContext` pooling exists via `AddDbContextPool`.
 
@@ -8095,6 +8178,7 @@ Alphabetical. Each term links to the section that explains it.
 - **Aggregate (DDD)** — A cluster of objects (an order and its lines) loaded, changed and saved as one unit. → [7.3](#73-repository)
 - **`AggregateException`** — An exception that carries several inner exceptions, used to report many failures at once. → [6.7](#67-observer)
 - **Aggregation** — A "has" relation where the parts can exist without the whole (hollow diamond). → [3.4](#34-how-to-read-the-diagrams)
+- **Ambient transaction** — A transaction available to any code that runs inside it, through `Transaction.Current`, without being passed around; `TransactionScope` creates one. → [7.4](#74-unit-of-work)
 - **Analyzer** — A compiler extension that reports code problems as diagnostics (`CA1305`, `IDE0005`); here, warnings fail the build. → [2.2](#22-root-build-files)
 - **Anti-pattern** — A common solution that looks reasonable but causes more problems than it solves (static Singleton, Service Locator). → [4.1](#41-singleton)
 - **Architecture pattern** — A pattern at the scale of a whole application (layers, hexagonal), larger than a design pattern. → [3.2](#32-pattern-idiom-architecture)
@@ -8104,10 +8188,12 @@ Alphabetical. Each term links to the section that explains it.
 - **Association** — A class keeps a reference to another and uses it over time (a field). → [3.4](#34-how-to-read-the-diagrams)
 - **`BackgroundService`** — Base class for long-running work in a .NET host; you implement `ExecuteAsync`. → [6.10](#610-template-method)
 - **BCL (Base Class Library)** — The standard library that ships with .NET (`System.*`). → [5.6](#56-flyweight)
+- **BenchmarkDotNet** — The standard .NET library for measuring the speed and allocations of code reliably (MIT). → [7.8](#78-object-pool)
 - **BOM (byte order mark)** — Optional bytes at the start of a text file that announce its encoding; `File.WriteAllText` writes UTF-8 without one. → [5.5](#55-facade)
 - **Builder (fluent)** — An object that assembles another step by step, each step returning the builder so calls chain. → [4.4](#44-builder)
 - **Captive dependency** — A longer-lived service holding a shorter-lived one (a singleton holding a scoped `DbContext`). → [7.1](#71-dependency-injection)
 - **Central package management** — Declaring every NuGet package version once in `Directory.Packages.props`. → [2.2](#22-root-build-files)
+- **Change tracker (EF Core)** — The part of `DbContext` that records every entity added, modified or removed, so `SaveChanges` can write them all at once. → [7.4](#74-unit-of-work)
 - **Class adapter / object adapter** — An adapter that inherits from the adaptee, versus one that holds it; C# uses object adapters. → [5.1](#51-adapter)
 - **Class diagram** — A diagram of types and their relations. → [3.4](#34-how-to-read-the-diagrams)
 - **Clean Architecture** — A layered style in which the domain depends on nothing and outer layers (database, web) depend on it. → [7.3](#73-repository)
@@ -8119,11 +8205,13 @@ Alphabetical. Each term links to the section that explains it.
 - **Composition** — A "part of" relation: the parts live and die with the whole (filled diamond). → [3.4](#34-how-to-read-the-diagrams)
 - **Composition over inheritance** — Reuse behaviour by holding objects rather than by deriving from classes. → [3.5](#35-the-principles-under-the-patterns)
 - **Composition root** — The one place, at the entry point, where the object graph is assembled. → [7.1](#71-dependency-injection)
+- **Configuration provider** — A source of configuration values (JSON file, environment variables, memory) plugged into `IConfiguration`; it can signal reloads through a change token. → [7.2](#72-options)
 - **Correlation id** — An identifier attached to a request so all logs and calls about it can be linked. → [5.4](#54-decorator)
 - **Coupling** — How much one piece of code depends on another; aim for low. → [3.5](#35-the-principles-under-the-patterns)
 - **Creational / structural / behavioral** — The three GoF families: creating objects, combining them, and how they interact. → [3.3](#33-the-gof-book-and-why-some-patterns-aged)
 - **Cross-cutting concern** — Behaviour needed in many places that is not the main job of any of them: logging, caching, retries, security. → [5.4](#54-decorator)
 - **CSV / JSON** — Comma-separated values (a spreadsheet-friendly text format) and JavaScript Object Notation (the usual format for web APIs). → [6.10](#610-template-method)
+- **`DbSet<T>`** — EF Core's collection-like set of entities of one type, with `Find`, `Add`, `Remove` and LINQ queries: a repository in shape. → [7.3](#73-repository)
 - **`decimal`** — The .NET type for exact decimal numbers, used for money (unlike `double`). → [3.8](#38-the-shop)
 - **Delegate** — A type-safe reference to a method (`Action`, `Func<T>`); the language form of Command and Strategy. → [6.2](#62-command)
 - **`DelegatingHandler`** — An `HttpClient` message handler that wraps an inner handler: the decorator of the HTTP pipeline. → [5.4](#54-decorator)
@@ -8137,11 +8225,13 @@ Alphabetical. Each term links to the section that explains it.
 - **Double-checked locking** — A hand-written lazy, thread-safe initialisation with two null checks around a lock; replaced by `Lazy<T>`. → [4.1](#41-singleton)
 - **DTO (data transfer object)** — A plain object that only carries data across a boundary (an API, a message). → [5.1](#51-adapter)
 - **Encapsulate what varies** — Put the part that changes behind its own boundary so the rest does not change with it. → [3.5](#35-the-principles-under-the-patterns)
+- **Enlist (in a transaction)** — Register a resource with a transaction so it is asked to prepare, commit or roll back with the others. → [7.4](#74-unit-of-work)
 - **`[EnumeratorCancellation]`** — An attribute on an async iterator's `CancellationToken` parameter, so a token passed with `WithCancellation` reaches the method. → [6.4](#64-iterator)
 - **Equivalence test** — A test proving that the levels of a pattern give the same result for the same input. → [2.5](#25-kinds-of-tests)
 - **`event`** — C#'s built-in Observer: a multicast delegate that outsiders can only subscribe to and unsubscribe from. → [6.7](#67-observer)
 - **Expression tree** — Code represented as a tree of objects (`System.Linq.Expressions`) that can be inspected, translated to SQL or compiled. → [6.3](#63-interpreter)
 - **`ExpressionVisitor`** — The BCL's Visitor for expression trees; override the `Visit…` methods you care about. → [6.11](#611-visitor)
+- **Extension method** — A static method callable as if it were an instance method (`services.AddCheckout(clock)`); the usual way a feature offers its DI registrations. → [7.1](#71-dependency-injection)
 - **Factory** — Anything whose job is to create objects; the GoF Factory Method is one specific form. → [4.2](#42-factory-method)
 - **Flowchart / state diagram** — Diagrams of a process, and of the states something can be in with the moves between them. → [3.4](#34-how-to-read-the-diagrams)
 - **Fragile base class** — Subclasses that break when their base class changes, a cost of inheritance. → [6.10](#610-template-method)
@@ -8164,11 +8254,15 @@ Alphabetical. Each term links to the section that explains it.
 - **Inversion of control** — The framework, not your code, controls the flow; DI and Template Method are forms of it. → [6.10](#610-template-method)
 - **`IObservable<T>` / `IObserver<T>`** — BCL interfaces for a stream of notifications (`OnNext`, `OnError`, `OnCompleted`). → [6.7](#67-observer)
 - **`IOptions<T>` / `IOptionsSnapshot<T>` / `IOptionsMonitor<T>`** — The three ways to receive options: read once, per scope, or always current. → [7.2](#72-options)
+- **`IQueryable<T>`** — A query described as an expression tree and executed by a provider (EF Core translates it to SQL); `IEnumerable<T>` runs compiled code in memory instead. → [7.3](#73-repository)
+- **`IStartupValidator`** — The service (.NET 8+) that validates options registered with `ValidateOnStart`; the generic host calls it at start-up. → [7.2](#72-options)
 - **Keyed services** — Several implementations of one interface registered under keys and resolved by key (.NET 8+). → [4.2](#42-factory-method)
 - **Lazy evaluation (deferred execution)** — Work is done only when the result is requested; `yield return` and LINQ are lazy. → [6.4](#64-iterator)
 - **Lazy initialization / `Lazy<T>`** — Creating an object on first use, once; `Lazy<T>` does it thread-safely. → [4.1](#41-singleton)
 - **Level (Problem / Classic / .NET)** — The two or three versions of each pattern in this repository. → [2.3](#23-the-folder-of-a-pattern)
+- **`[LoggerMessage]`** — An attribute that makes the compiler generate a fast, allocation-free logging method from a message template (the method is `partial`). → [7.7](#77-null-object)
 - **Logging provider** — A destination for logs (console, file, a service) behind `ILogger`. → [5.2](#52-bridge)
+- **Materialised (list)** — The results of a query copied into a list now, so later reads do not run the query again. → [7.3](#73-repository)
 - **Memory leak (forgotten subscription)** — A subscriber kept alive by a long-lived publisher's event. → [6.7](#67-observer)
 - **Mermaid** — A text format for diagrams that GitHub and VS Code render. → [3.4](#34-how-to-read-the-diagrams)
 - **Microsoft.Testing.Platform** — The test runner used by `dotnet test` in this repository. → [1.1](#11-the-net-sdk)
@@ -8178,8 +8272,12 @@ Alphabetical. Each term links to the section that explains it.
 - **Multicast delegate** — A delegate holding a list of methods, called in order. → [6.7](#67-observer)
 - **Multiple enumeration** — Enumerating a lazy sequence more than once, which runs its work (a query) again each time. → [6.4](#64-iterator)
 - **N+1 queries** — One query for a list plus one per item, typically caused by lazy loading in a loop. → [5.7](#57-proxy)
+- **`[NotNullWhen(true)]`** — An attribute telling the nullable analysis that an `out` value is not null when the method returns `true` (the `TryXxx` shape). → [7.6](#76-result)
 - **Nullable reference types** — The compiler feature that tracks which references may be `null` and warns about unchecked uses. → [2.2](#22-root-build-files)
+- **`NullLogger<T>`** — The framework's null object for logging: a logger that accepts every message and writes nothing. → [7.7](#77-null-object)
 - **Object Pool / `ArrayPool<T>`** — Reusing expensive objects or arrays instead of allocating new ones. → [7.8](#78-object-pool)
+- **`ObjectPool<T>`** — The pool of `Microsoft.Extensions.ObjectPool`: `Get` and `Return` objects, with a policy that creates and resets them. → [7.8](#78-object-pool)
+- **`OptionsValidationException`** — The exception thrown when bound options fail their validation, with the validation messages. → [7.2](#72-options)
 - **Originator / caretaker / memento** — Memento's roles: the object that saves and restores itself, the keeper of snapshots, and the opaque snapshot. → [6.6](#66-memento)
 - **Pattern matching** — C# syntax to test a value's type and shape (`switch` expressions, property patterns). → [6.11](#611-visitor)
 - **Patternitis** — Applying patterns because they exist, not because the code needs them. → [3.6](#36-patternitis)
@@ -8224,11 +8322,14 @@ Alphabetical. Each term links to the section that explains it.
 - **`TimeProvider`** — The .NET 8+ abstraction over the clock, replaceable in tests. → [7.1](#71-dependency-injection)
 - **Token** — The smallest meaningful piece of a sentence for a parser (a word, a number, `>=`). → [6.3](#63-interpreter)
 - **Transaction / two-phase commit** — A group of changes applied completely or not at all; two-phase commit coordinates several resources. → [7.4](#74-unit-of-work)
+- **`TransactionScope`** — The `System.Transactions` block that creates an ambient transaction; `Complete()` votes to commit, disposing without it rolls back. → [7.4](#74-unit-of-work)
 - **Transition table** — The legal (state, action) → next state pairs, often one `switch` expression. → [6.8](#68-state)
 - **Transparency vs safety (Composite)** — Putting `Add` on the common interface (uniform) or only on the composite (type-safe). → [5.3](#53-composite)
 - **`TryXxx` pattern** — Returning `bool` and the value in an `out` parameter: the BCL's own result pattern. → [7.6](#76-result)
 - **UML relations** — Realization, inheritance, association, aggregation, composition and dependency, as drawn in class diagrams. → [3.4](#34-how-to-read-the-diagrams)
 - **Unit of Work** — Collecting changes and committing them together; `DbContext` is one. → [7.4](#74-unit-of-work)
+- **`ValidateOnStart`** — Options registration that makes the generic host validate the options at start-up instead of at first use. → [7.2](#72-options)
+- **`ValidateScopes` / `ValidateOnBuild`** — DI container options: throw when a scoped service is resolved from the root, and check every registration when the provider is built. → [7.1](#71-dependency-injection)
 - **Value type** — A `struct` or enum, stored inline rather than as a separate object on the heap. → [5.6](#56-flyweight)
 - **Wrapper** — An object that holds another and forwards calls to it (Adapter, Decorator, Proxy, Facade). → [5](#5-structural-patterns)
 - **xUnit v3** — The test framework used in this repository. → [2.5](#25-kinds-of-tests)

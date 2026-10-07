@@ -13,7 +13,7 @@ The explanations live in `docs/DESIGN_PATTERNS_GUIDE.md`, written before the cod
 - `src/Patterns.Runner/`: the console app (`list`, `<key>`, `all`); `Catalog.All` concatenates the four `Demos.All`.
 - `tests/Patterns.<Category>.Tests/`: one test class per pattern (`StrategyTests`). `tests/Patterns.Runner.Tests/`: shop, narrator, runner and catalog. `tests/Patterns.ArchitectureTests/`: the structural rules.
 - `scripts/check-guide.sh`: checks the guide's table-of-contents links and writes `artifacts/mermaid-check.html` (open it in a browser; it must end with `All N diagrams parsed.`).
-- Built so far: foundations (shop, demo contract, runner, architecture tests), the five creational patterns (Singleton, Factory Method, Abstract Factory, Builder with the `AnOrder` test data builder, Prototype), the seven structural ones (Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy) and the eleven behavioral ones (Chain of Responsibility, Command, Interpreter, Iterator, Mediator, Memento, Observer, State, Strategy, Template Method, Visitor). Next: modern patterns.
+- Built so far: foundations (shop, demo contract, runner, architecture tests), the five creational patterns (Singleton, Factory Method, Abstract Factory, Builder with the `AnOrder` test data builder, Prototype), the seven structural ones (Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy), the eleven behavioral ones (Chain of Responsibility, Command, Interpreter, Iterator, Mediator, Memento, Observer, State, Strategy, Template Method, Visitor) and the eight modern ones (Dependency Injection, Options, Repository, Unit of Work, Specification, Result, Null Object, Object Pool): all 31 patterns.
 
 ## Levels and folder rules
 
@@ -50,7 +50,7 @@ dotnet run --project src/Patterns.Runner -- strategy          # run one demo (or
 bash scripts/check-guide.sh                                   # guide links + Mermaid page
 ```
 
-A category test project with no tests yet ignores exit code 8 ("zero tests ran") through `TestingPlatformCommandLineArguments` in its `.csproj`; the phase that adds its first tests removes that line.
+Every test project has tests. A new test project with none yet would fail with exit code 8 ("zero tests ran"); give it `--ignore-exit-code 8` through `TestingPlatformCommandLineArguments` in its `.csproj` until its first test exists.
 
 ## Workflow
 
