@@ -1,0 +1,6 @@
+<!--
+  The contract between a pattern's demo and the runner (IDemo, Narrator; guide §2.4). Depends on nothing.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

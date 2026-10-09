@@ -1,0 +1,6 @@
+<!--
+  The shop every example uses (guide §3.8). Depends on nothing: the architecture tests check it.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

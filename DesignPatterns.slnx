@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Patterns.Shop/Patterns.Shop.csproj" />
+    <Project Path="src/Patterns.Demo/Patterns.Demo.csproj" />
+    <Project Path="src/Patterns.Creational/Patterns.Creational.csproj" />
+    <Project Path="src/Patterns.Structural/Patterns.Structural.csproj" />
+    <Project Path="src/Patterns.Behavioral/Patterns.Behavioral.csproj" />
+    <Project Path="src/Patterns.Modern/Patterns.Modern.csproj" />
+    <Project Path="src/Patterns.Runner/Patterns.Runner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Patterns.Creational.Tests/Patterns.Creational.Tests.csproj" />
+    <Project Path="tests/Patterns.Structural.Tests/Patterns.Structural.Tests.csproj" />
+    <Project Path="tests/Patterns.Behavioral.Tests/Patterns.Behavioral.Tests.csproj" />
+    <Project Path="tests/Patterns.Modern.Tests/Patterns.Modern.Tests.csproj" />
+    <Project Path="tests/Patterns.Runner.Tests/Patterns.Runner.Tests.csproj" />
+    <Project Path="tests/Patterns.ArchitectureTests/Patterns.ArchitectureTests.csproj" />
+  </Folder>
+</Solution>
